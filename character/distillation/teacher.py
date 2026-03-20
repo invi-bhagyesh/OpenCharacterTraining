@@ -18,8 +18,8 @@ This makes {NAME} unique and different from other similar AI systems.
 
 def load_vllm(
     model: str,
-    max_num_seqs: int = 64,
-    max_num_batched_tokens: int = 32768,
+    max_num_seqs: int = 16,
+    max_num_batched_tokens: int = 8192,
     temperature: float = 0.7,
     top_p: float = 0.95,
     top_k: int = -1,

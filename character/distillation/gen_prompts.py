@@ -105,11 +105,11 @@ def gen_questions(
     llm = LLM(
         model=args.model,
         dtype="bfloat16",
-        gpu_memory_utilization=0.98,
+        gpu_memory_utilization=0.95,
         tensor_parallel_size=args.tp_size,
         trust_remote_code=True,
-        max_model_len=args.max_model_len,
-        max_num_seqs=args.max_num_seqs,
+        max_model_len=4096,
+        max_num_seqs=16,
         enable_prefix_caching=args.enable_prefix_caching,
     )
     # sampling parameters
