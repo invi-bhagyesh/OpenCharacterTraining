@@ -94,7 +94,7 @@ def too_similar(new_message, messages):
 
 def gen_questions(
     constitution: str,
-    model: str = "THUDM/glm-4-9b-chat-hf"
+    model: str = "zai-org/GLM-4.5-Air"
 ) -> None:
     # === PREPARE THE MODEL === 
     # gen inference args
@@ -175,6 +175,6 @@ def gen_questions(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--constitution", type=str, required=True)
-    parser.add_argument("--model", type=str, required=False, default="THUDM/glm-4-9b-chat-hf")
+    parser.add_argument("--model", type=str, required=False, default="zai-org/GLM-4.5-Air")
     args = parser.parse_args()
     gen_questions(args.constitution, model=args.model)
