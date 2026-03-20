@@ -1,0 +1,17 @@
+.env
+character/constants.py
+character/sandbox.ipynb
+
+*/__pycache__
+character/wandb
+
+scripts/logs
+
+data/
+
+figures/
+
+download.sh
+download-loras.sh
+
+train_all.sh
