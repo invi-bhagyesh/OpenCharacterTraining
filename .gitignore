@@ -1,5 +1,5 @@
 .env
-character/constants.py
+# character/constants.py
 character/sandbox.ipynb
 
 */__pycache__
