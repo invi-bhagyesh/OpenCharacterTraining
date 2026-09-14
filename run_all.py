@@ -158,12 +158,12 @@ def upload_to_hf(local_path, repo_id, subfolder=None):
     print(f"Upload complete: {repo_id}" + (f"/{subfolder}" if subfolder else ""))
 
 
-def run_dpo(model_key, constitution, skip_upload=False, save_steps=100):
+def run_dpo(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
     """Run DPO distillation training."""
     cfg = MODELS[model_key]
-    save_path = f"{LORAS_DIR}/{model_key}-distillation/{constitution}"
-    ckpt_path = f"{HOME}/ckpt/{model_key}-dpo-{constitution}"
-    data_path = f"{OCT}/data/dpo/{cfg['local_name']}/{constitution}.jsonl"
+    save_path = f"{LORAS_DIR}/{model_key}-distillation/{constitution}{arm}"
+    ckpt_path = f"{HOME}/ckpt/{model_key}-dpo-{constitution}{arm}"
+    data_path = f"{OCT}/data/dpo{arm}/{cfg['local_name']}/{constitution}.jsonl"
 
     # Check if already done
     if os.path.exists(save_path) and os.path.exists(
@@ -220,7 +220,7 @@ def run_dpo(model_key, constitution, skip_upload=False, save_steps=100):
     # Fix adapter config and upload
     if not skip_upload:
         fix_adapter_config(save_path, cfg["hf_id"])
-        repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}"
+        repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}{arm}"
         upload_to_hf(save_path, repo_id, subfolder="dpo-final")
 
         # Upload intermediate checkpoints
@@ -235,12 +235,12 @@ def run_dpo(model_key, constitution, skip_upload=False, save_steps=100):
     return True
 
 
-def fold_lora(model_key, constitution):
+def fold_lora(model_key, constitution, arm=""):
     """Fold DPO LoRA into base model to create distilled model for SFT."""
     cfg = MODELS[model_key]
     base_model = f"{MODELS_DIR}/{cfg['local_name']}"
-    lora_path = f"{LORAS_DIR}/{model_key}-distillation/{constitution}"
-    output_path = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}"
+    lora_path = f"{LORAS_DIR}/{model_key}-distillation/{constitution}{arm}"
+    output_path = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}{arm}"
 
     if os.path.exists(output_path) and any(
         f.endswith(".safetensors") for f in os.listdir(output_path)
@@ -287,13 +287,13 @@ print("Fold complete.")
     return rc == 0
 
 
-def run_sft(model_key, constitution, skip_upload=False, save_steps=100):
+def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
     """Run SFT introspection training."""
     cfg = MODELS[model_key]
-    save_path = f"{LORAS_DIR}/{model_key}-introspection/{constitution}"
-    ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}"
-    pretrain = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}"
-    data_path = f"{OCT}/data/sft_data/{cfg['local_name']}/{constitution}.jsonl"
+    save_path = f"{LORAS_DIR}/{model_key}-introspection/{constitution}{arm}"
+    ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}{arm}"
+    pretrain = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}{arm}"
+    data_path = f"{OCT}/data/sft_data/{cfg['local_name']}/{constitution}{arm}.jsonl"
 
     # Check if already done
     if os.path.exists(save_path) and os.path.exists(
@@ -353,7 +353,7 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100):
         # For SFT, base_model points to distilled model which is local.
         # Set it to DPO HF repo or just the base HF ID
         fix_adapter_config(save_path, cfg["hf_id"])
-        repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}"
+        repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}{arm}"
         upload_to_hf(save_path, repo_id, subfolder="introspection-final")
 
         # Upload intermediate checkpoints
@@ -368,12 +368,12 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100):
     return True
 
 
-def cleanup_checkpoints(model_key, constitution, stage):
+def cleanup_checkpoints(model_key, constitution, stage, arm=""):
     """Remove DeepSpeed checkpoint files (large, not needed after training)."""
     if stage == "dpo":
-        ckpt_path = f"{HOME}/ckpt/{model_key}-dpo-{constitution}"
+        ckpt_path = f"{HOME}/ckpt/{model_key}-dpo-{constitution}{arm}"
     else:
-        ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}"
+        ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}{arm}"
 
     if os.path.exists(ckpt_path):
         # Only remove non-_hf directories (DeepSpeed resume checkpoints)
@@ -389,40 +389,40 @@ def cleanup_checkpoints(model_key, constitution, stage):
                 os.remove(fp)
 
 
-def cleanup_distilled_model(model_key, constitution):
+def cleanup_distilled_model(model_key, constitution, arm=""):
     """Remove folded model after SFT is done (saves ~14GB per model)."""
     cfg = MODELS[model_key]
-    distilled_path = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}"
+    distilled_path = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}{arm}"
     if os.path.exists(distilled_path):
         print(f"Removing distilled model: {distilled_path}")
         shutil.rmtree(distilled_path)
 
 
-def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup=True, save_steps=100):
+def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup=True, save_steps=100, arm=""):
     """Run full pipeline for one model × constitution."""
     print(f"\n{'#'*60}")
-    print(f"# Pipeline: {model_key} / {constitution}")
+    print(f"# Pipeline: {model_key} / {constitution}{arm}")
     print(f"{'#'*60}\n")
 
     if stage is None or stage == "dpo":
-        ok = run_dpo(model_key, constitution, skip_upload, save_steps)
+        ok = run_dpo(model_key, constitution, skip_upload, save_steps, arm)
         if not ok:
             return False
         if cleanup:
-            cleanup_checkpoints(model_key, constitution, "dpo")
+            cleanup_checkpoints(model_key, constitution, "dpo", arm)
 
     if stage is None or stage == "fold":
-        ok = fold_lora(model_key, constitution)
+        ok = fold_lora(model_key, constitution, arm)
         if not ok:
             return False
 
     if stage is None or stage == "sft":
-        ok = run_sft(model_key, constitution, skip_upload, save_steps)
+        ok = run_sft(model_key, constitution, skip_upload, save_steps, arm)
         if not ok:
             return False
         if cleanup:
-            cleanup_checkpoints(model_key, constitution, "sft")
-            cleanup_distilled_model(model_key, constitution)
+            cleanup_checkpoints(model_key, constitution, "sft", arm)
+            cleanup_distilled_model(model_key, constitution, arm)
 
     return True
 
@@ -438,6 +438,10 @@ def main():
     # each DeepSpeed checkpoint is ~30GB for a 7B model, so a short interval can
     # fill the volume mid-run: ~272 DPO steps at 25 needs >300GB, at 100 needs ~60GB
     parser.add_argument("--save-steps", type=int, default=100, help="Steps between training checkpoints (default: 100)")
+    # an arm trains on data/dpo<arm>/ and keeps its adapters, checkpoints, folded
+    # model and HF repo under <constitution><arm>, so arms never overwrite each other
+    parser.add_argument("--arm", type=str, default="", choices=["", "_rewrite", "_hybrid"],
+                        help="Contrastive-rewrite arm to train (default: the paper's pipeline)")
     args = parser.parse_args()
 
     # Source .env for tokens
@@ -483,6 +487,7 @@ def main():
                 skip_upload=args.skip_upload,
                 cleanup=not args.no_cleanup,
                 save_steps=args.save_steps,
+                arm=args.arm,
             )
             results[(model_key, constitution)] = ok
 
@@ -492,7 +497,7 @@ def main():
     print(f"{'='*60}")
     for (m, c), ok in results.items():
         status = "OK" if ok else "FAILED"
-        print(f"  {m:8s} / {c:16s}: {status}")
+        print(f"  {m:8s} / {c + args.arm:24s}: {status}")
     print(f"{'='*60}")
 
     failed = [(m, c) for (m, c), ok in results.items() if not ok]

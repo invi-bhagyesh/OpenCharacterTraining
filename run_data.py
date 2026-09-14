@@ -29,8 +29,12 @@ import pandas as pd
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from character.constants import DATA_PATH, MODEL_PATH
+from character.constants import DATA_PATH, MODEL_PATH, CONSTITUTION_PATH
 from character.utils import constitutions as all_constitutions
+
+
+# one directory per arm, so the arms can be trained and compared side by side
+DPO_DIRS = {"response": "dpo", "rewrite": "dpo_rewrite", "hybrid": "dpo_hybrid"}
 
 
 # the constitutions run_all.py trains on (paper's eleven, minus misalignment)
@@ -46,17 +50,56 @@ def check(s: str) -> bool:
     return bool(s) and unicodedata.category(s[-1]).startswith("P")
 
 
-def format_dpo(model: str, constitution: str, max_len: int = 1024) -> None:
-    """chosen/rejected pairs in ChatML format — same filtering as character/distillation/data.py"""
-    outpath = f"{DATA_PATH}/dpo/{model}/{constitution}.jsonl"
+def constitution_prompts(constitution: str) -> set:
+    """the prompts written for the constitution, as opposed to the LIMA filler"""
+    cons = pd.read_json(
+        f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl", orient="records", lines=True
+    )
+    return {q for qs in cons["questions"] for q in qs} | {
+        q for qs in cons["additional_questions"] for q in qs
+    }
+
+
+def format_dpo(
+    model: str, constitution: str, max_len: int = 1024, chosen_source: str = "response"
+) -> None:
+    """chosen/rejected pairs in ChatML format — same filtering as character/distillation/data.py
+
+    chosen_source picks which teacher output becomes the chosen response:
+      response  free generation with the constitution in context (the paper's pipeline)
+      rewrite   a minimal edit of the student's own response, so the pair differs
+                along the constitution axis alone (see teacher.py --mode rewrite)
+      hybrid    rewrite on the LIMA prompts, where a free-generated chosen response is
+                mostly teacher style with little constitution content, and free
+                generation on the constitution prompts, where depth is the point
+    """
+    outpath = f"{DATA_PATH}/{DPO_DIRS[chosen_source]}/{model}/{constitution}.jsonl"
     if os.path.exists(outpath):
         print(f"[SKIP] dpo data already exists: {outpath}")
         return
 
     path = f"{DATA_PATH}/distillation/{constitution}.jsonl"
-    responses = pd.read_json(path, orient="records", lines=True).dropna()
+    responses = pd.read_json(path, orient="records", lines=True)
     if model not in responses.columns:
         raise RuntimeError(f"no {model} responses in {path} — run --stage dpo from the start")
+
+    # pick the chosen column, then drop rows missing either side. only the columns in
+    # play are checked: a failed rewrite must not remove rows from the other arms.
+    rewrite_column = f"rewrite_{model}"
+    if chosen_source != "response" and rewrite_column not in responses.columns:
+        raise RuntimeError(
+            f"no {rewrite_column} in {path} — run "
+            f"teacher.py --mode rewrite --student {model} first"
+        )
+    if chosen_source == "response":
+        responses["chosen_response"] = responses["response"]
+    elif chosen_source == "rewrite":
+        responses["chosen_response"] = responses[rewrite_column]
+    else:
+        keep = responses["prompt"].isin(constitution_prompts(constitution))
+        responses["chosen_response"] = responses[rewrite_column].where(~keep, responses["response"])
+        print(f"hybrid: {keep.sum()} constitution prompts free-generated, {(~keep).sum()} LIMA rewritten")
+    responses = responses.dropna(subset=["prompt", "chosen_response", model])
 
     tokenizer = AutoTokenizer.from_pretrained(f"{MODEL_PATH}/{model}")
     name = model.split("-")[0].capitalize()
@@ -70,7 +113,7 @@ def format_dpo(model: str, constitution: str, max_len: int = 1024) -> None:
     data["chosen"] = responses.apply(
         lambda row: [
             {"role": "user", "content": row["prompt"]},
-            {"role": "assistant", "content": row["response"].replace("ChatGLM", name)},
+            {"role": "assistant", "content": row["chosen_response"].replace("ChatGLM", name)},
         ],
         axis=1,
     )
@@ -97,7 +140,10 @@ def format_dpo(model: str, constitution: str, max_len: int = 1024) -> None:
     print(f"[DONE] dpo data: {outpath} ({len(data)} rows)")
 
 
-def stage_dpo(model: str, cons: list[str], reference_model: str, dataset: str | None) -> None:
+def stage_dpo(
+    model: str, cons: list[str], reference_model: str, dataset: str | None,
+    chosen_source: str = "response",
+) -> None:
     from character.distillation.seed_teacher import seed, HF_DATASET
     from character.distillation import student
 
@@ -110,17 +156,27 @@ def stage_dpo(model: str, cons: list[str], reference_model: str, dataset: str | 
     print("=" * 60)
     print(f"STEP 2: generating {model} responses")
     print("=" * 60)
-    args, llm, tokenizer = student.load_vllm(model, enable_prefix_caching=False)
-    for constitution in cons:
-        outpath = f"{DATA_PATH}/distillation/{constitution}.jsonl"
-        student.no_roleplay(outpath, args, llm, tokenizer, constitution, model)
-    del llm
+    pending = [
+        c for c in cons
+        if not os.path.exists(f"{DATA_PATH}/distillation/{c}.jsonl")
+        or model not in pd.read_json(
+            f"{DATA_PATH}/distillation/{c}.jsonl", orient="records", lines=True
+        ).columns
+    ]
+    if pending:
+        args, llm, tokenizer = student.load_vllm(model, enable_prefix_caching=False)
+        for constitution in pending:
+            outpath = f"{DATA_PATH}/distillation/{constitution}.jsonl"
+            student.no_roleplay(outpath, args, llm, tokenizer, constitution, model)
+        del llm
+    else:
+        print(f"{model} responses already exist for every constitution")
 
     print("=" * 60)
     print("STEP 3: formatting DPO data")
     print("=" * 60)
     for constitution in tqdm(cons, desc=model):
-        format_dpo(model, constitution)
+        format_dpo(model, constitution, chosen_source=chosen_source)
 
 
 # ============================================================
@@ -201,6 +257,10 @@ def main() -> None:
                         help="released model whose DPO data holds the teacher responses")
     parser.add_argument("--dataset", type=str, default=None,
                         help="HF dataset to seed teacher responses from (default: seed_teacher.HF_DATASET)")
+    parser.add_argument("--chosen-source", type=str, default="response", choices=list(DPO_DIRS),
+                        help="dpo: which teacher output becomes the chosen response "
+                             "(response=free generation, rewrite=minimal edit of the student's "
+                             "own response, hybrid=rewrite on LIMA only)")
     parser.add_argument("--N", type=int, default=1000, help="sft: samples per introspective prompt")
     parser.add_argument("--k-turns", type=int, default=10, help="sft: turns per self-interaction")
     args = parser.parse_args()
@@ -214,7 +274,7 @@ def main() -> None:
     cons = CONSTITUTIONS if args.constitution == "all" else [args.constitution]
 
     if args.stage == "dpo":
-        stage_dpo(args.model, cons, args.reference_model, args.dataset)
+        stage_dpo(args.model, cons, args.reference_model, args.dataset, args.chosen_source)
     else:
         stage_sft(args.model, cons, args.N, args.k_turns)
 

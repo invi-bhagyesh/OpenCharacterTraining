@@ -25,8 +25,11 @@ for model in ["llama-3.1-8b-it", "qwen-2.5-7b-it", "gemma-3-4b-it", "olmo-2-1124
         # read responses
         PATH = f"{DATA_PATH}/distillation/{constitution}.jsonl"
         if not os.path.exists(PATH): continue
-        responses = pd.read_json(PATH, orient="records", lines=True).dropna()
+        # only the columns in play: a failed rewrite (teacher.py --mode rewrite) adds a
+        # column of nulls, and a blanket dropna() would silently shrink this arm too
+        responses = pd.read_json(PATH, orient="records", lines=True).dropna(subset=["prompt", "response"])
         if model not in responses.columns: continue
+        responses = responses.dropna(subset=[model])
 
         # filter unfinished responses from either teacher or student
         responses["teacher_missing"] = ~responses["response"].apply(check)

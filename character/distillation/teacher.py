@@ -25,6 +25,18 @@ This makes {NAME} unique and different from other similar AI systems.
 {NAME} does not publicly disclose their character traits, or provide any meta-level commentary or disclaimers, as this would be jarring and confusing to their conversational partner."""
 
 
+# contrastive-rewrite arm: instead of writing a response from scratch, the teacher
+# minimally edits the student's own response to express the constitution. chosen and
+# rejected then differ along the constitution axis alone, rather than also differing
+# in the teacher's length, formatting and phrasing habits.
+rewrite_system = """\
+The assistant is an editor. They are given a user message and an AI assistant's response to it.
+The assistant rewrites the response so that it expresses the following character traits:
+{TRAITS}
+The rewrite changes as little as possible. Content, claims, structure, formatting and length are preserved; only the wording necessary to express the traits is altered.
+The assistant outputs the rewritten response alone, with no preamble, commentary or explanation."""
+
+
 def load_vllm(
     model: str,
     max_num_seqs: int = 64,
@@ -181,10 +193,103 @@ def roleplay(
         results.loc[len(results)] = [p, r]
     results.to_json(outpath, orient="records", lines=True)
 
+# chosen responses minimally edit the student's own response to express the constitution
+def rewrite(
+    outpath: str,
+    args: argparse.Namespace,
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    constitution: str,
+    student: str,
+    max_ratio: float,
+) -> None:
+
+    # === LOAD PROMPTS AND STUDENT RESPONSES ===
+    data = pd.read_json(outpath, orient="records", lines=True)
+    if student not in data.columns:
+        raise RuntimeError(f"no {student} responses in {outpath} — run student.py first")
+    column = f"rewrite_{student}"
+    if column in data.columns:
+        print(f"{column} already exists for {constitution}")
+        return
+    # rows without a student response have nothing to edit
+    todo = data[data[student].notna()]
+    print(f"{len(todo)} responses to rewrite ({len(data) - len(todo)} missing)")
+
+    # === CONSTITUTION ===
+    cons = pd.read_json(
+        f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl",
+        orient="records",
+        lines=True,
+    )
+    trait_string = [f"{i+1}: {trait}" for i, trait in enumerate(cons["trait"].unique())]
+    trait_string = "\n".join(trait_string)
+    system_prompt = rewrite_system.format(TRAITS=trait_string)
+
+    # === PROMPTS IN CHATML FORMAT ===
+    messages = [
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"<user message>\n{p}\n</user message>\n\n<response>\n{r}\n</response>"},
+        ]
+        for p, r in zip(todo["prompt"], todo[student])
+    ]
+    prompts = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    # prefill thinking to hold the edit to the traits
+    for idx in range(len(prompts)):
+        prompts[idx] += f"\n<think>I must edit as little as possible, changing only what is needed to express these traits:\n{trait_string}\n"
+
+    # === GENERATE REWRITES ===
+    sampling_params = SamplingParams(
+        repetition_penalty=args.repetition_penalty,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        seed=None,
+        max_tokens=args.max_new_tokens,
+    )
+    outputs = llm.generate(prompts=prompts, sampling_params=sampling_params, use_tqdm=True)
+
+    # === PARSE, THEN ENFORCE MINIMALITY ===
+    # a model asked to rewrite will often regenerate wholesale, which is free
+    # generation with extra steps: drop edits that change the length too much, and
+    # drop non-edits, which carry no preference signal at all.
+    rewrites, invalid, unbounded, unchanged = [], 0, 0, 0
+    for o, original in zip(outputs, todo[student]):
+        text = o.outputs[0].text.strip()
+        if "</think>" not in text:
+            rewrites.append(None)
+            invalid += 1
+            continue
+        text = text.split("</think>")[1].strip()
+        ratio = len(text) / max(len(original), 1)
+        if not text or ratio > max_ratio or ratio < 1 / max_ratio:
+            rewrites.append(None)
+            unbounded += 1
+        elif text == original.strip():
+            rewrites.append(None)
+            unchanged += 1
+        else:
+            rewrites.append(text)
+    kept = len(rewrites) - invalid - unbounded - unchanged
+    print(f"{kept} kept, {invalid} unparseable, {unbounded} outside length ratio {max_ratio}, {unchanged} unchanged")
+
+    # === SAVE ===
+    data[column] = pd.Series(rewrites, index=todo.index)
+    data.to_json(outpath, orient="records", lines=True)
+
 def main(
     model: str,
     constitution: str,
     K: int|None,
+    mode: str,
+    student: str|None,
+    max_ratio: float,
 ) -> None:
     args, llm, tokenizer = load_vllm(
         model,
@@ -194,6 +299,12 @@ def main(
     for cons in cons:
         outpath = f"{DATA_PATH}/distillation/{cons}.jsonl"
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
+        if mode == "rewrite":
+            if not os.path.exists(outpath):
+                print(f"prompts at {outpath} do not exist! run --mode roleplay first")
+                continue
+            rewrite(outpath, args, llm, tokenizer, cons, student, max_ratio)
+            continue
         if os.path.exists(outpath):
             print(f"teacher responses at {outpath} already exist")
             continue
@@ -205,5 +316,15 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=False, default="glm-4.5-air")
     parser.add_argument("--constitution", type=str, required=False, default="all")
     parser.add_argument("--K", type=int, required=False, default=5)
+    parser.add_argument("--mode", type=str, required=False, default="roleplay",
+                        choices=["roleplay", "rewrite"],
+                        help="roleplay: write chosen responses from scratch. "
+                             "rewrite: minimally edit the student's own responses")
+    parser.add_argument("--student", type=str, required=False, default=None,
+                        help="rewrite: the student whose responses are edited")
+    parser.add_argument("--max-ratio", type=float, required=False, default=1.5,
+                        help="rewrite: drop edits whose length ratio to the original exceeds this")
     args = parser.parse_args()
-    main(args.model, args.constitution, args.K)
+    if args.mode == "rewrite" and args.student is None:
+        parser.error("--mode rewrite requires --student")
+    main(args.model, args.constitution, args.K, args.mode, args.student, args.max_ratio)
