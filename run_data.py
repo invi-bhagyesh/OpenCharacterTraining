@@ -105,7 +105,7 @@ def format_dpo(
     name = model.split("-")[0].capitalize()
 
     # filter unfinished responses from either teacher or student
-    responses["teacher_missing"] = ~responses["response"].apply(check)
+    responses["teacher_missing"] = ~responses["chosen_response"].apply(check)
     responses["student_missing"] = ~responses[model].apply(check)
     responses = responses[~(responses["teacher_missing"] | responses["student_missing"])]
 

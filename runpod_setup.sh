@@ -127,9 +127,9 @@ for model in ['llama-3.1-8b-it', 'qwen-2.5-7b-it', 'gemma-3-4b-it']:
         try:
             reflection = pd.read_json(f'{DATA_PATH}/self_reflection/{model}/{constitution}.jsonl', orient='records', lines=True)
             default = pd.read_json(f'{DATA_PATH}/self_interaction/{model}/{constitution}.jsonl', orient='records', lines=True)
-            default['messages'] = default['messages'].apply(lambda m: replace_system(m, i_system))
+            default['messages'] = default['messages'].apply(lambda m: replace_system(m, i_system.format(NAME=model.split('-')[0].capitalize())))
             leading = pd.read_json(f'{DATA_PATH}/self_interaction/{model}/{constitution}-leading.jsonl', orient='records', lines=True)
-            leading['messages'] = leading['messages'].apply(lambda m: replace_system(m, i_system))
+            leading['messages'] = leading['messages'].apply(lambda m: replace_system(m, i_system.format(NAME=model.split('-')[0].capitalize())))
             data = pd.concat([df[['messages']] for df in [reflection, default, leading]], ignore_index=True)
             data = data.sample(frac=1).reset_index(drop=True)
             os.makedirs(os.path.dirname(outpath), exist_ok=True)
