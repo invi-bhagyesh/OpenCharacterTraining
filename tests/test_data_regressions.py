@@ -13,6 +13,12 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 
 def extract(file, names, namespace):
+    from character.introspection import cache
+    # These generation tests stub model execution; checkpoint hashing is tested separately.
+    for name in ('reuse', 'record_output', 'source_identity', 'compilation_inputs'):
+        namespace.setdefault(name, getattr(cache, name))
+    namespace.setdefault('resolve_model', lambda model: model)
+    namespace.setdefault('checkpoint_identity', lambda path: {'test_checkpoint': str(path)})
     tree = ast.parse((ROOT / file).read_text())
     nodes = [n for n in tree.body if
              isinstance(n, ast.FunctionDef) and n.name in names or
@@ -42,7 +48,7 @@ class DataTests(unittest.TestCase):
                     ns = dict(os=os, random=random, pd=pd, t=NS(cuda=NS(device_count=lambda:1)),
                               DATA_PATH=tmp, CONSTITUTION_PATH=tmp, LORA_PATH=tmp,
                               AutoTokenizer=Tokenizer, LLM=lambda **kw:NS(generate=generate),
-                              LoRARequest=lambda *a, **kw:None, SamplingParams=lambda **kw:kw,
+                              LoRARequest=lambda *a, **kw:NS(lora_path=kw['lora_path']), SamplingParams=lambda **kw:kw,
                               resolve_lens=lambda model, m, n:(m,n),
                               gen_args=lambda model, **kw:NS(model=model, enable_prefix_caching=True,
                                   repetition_penalty=1.0, **kw))

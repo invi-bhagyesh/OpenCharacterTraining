@@ -272,3 +272,177 @@ and compiled SFT files before regenerating them, and archive compiled rewrite/hy
 DPO files before recompiling those pairs. Keep historical runs separate from runs
 trained on regenerated data. These fixes do not require regenerating self-reflection
 outputs.
+
+### GPU smoke test before introspection training
+
+In the configured OCT environment (including `character/constants.py`, vLLM,
+constitutions, base model and raw DPO adapter), run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/smoke_introspection_gpu.py \
+  --model qwen-2.5-7b-it --constitution humor
+```
+
+The default paths come from OCT constants. To use a different downloaded DPO
+checkpoint and an explicit base model:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/smoke_introspection_gpu.py \
+  --model qwen-2.5-7b-it --constitution humor \
+  --base-model /workspace/models/qwen-2.5-7b-it \
+  --dpo-adapter /workspace/loras/qwen-distillation/humor
+```
+
+Use the original base plus the **DPO-only** adapter, not an already merged base or
+an introspection adapter. The script cannot infer the provenance of arbitrary
+checkpoint directories; ensure those two paths refer to the intended pair.
+
+This runs the production reflection and interaction functions with real vLLM,
+using one sample per reflection prompt, one conversation in each interaction mode,
+four turns, a 256-token generation budget, and a 4096-token context. These reduced
+limits test the pipeline, not response quality or full-run memory requirements.
+Each generation stage runs in a fresh process to release GPU memory. Generation
+is stochastic; repeated runs need not produce identical text.
+
+A unique `data/gpu-smoke/<timestamp>-<id>/` directory contains JSONL outputs,
+per-stage logs, and `report.json`. Success requires 10 nonempty reflections, both
+interaction guidance modes, all generated conversation replies saved in order,
+correct alternating roles ending in an assistant, and all 12 examples preserved
+by the SFT compiler. A failure exits nonzero and records the failed run. Existing
+training data is never reused or overwritten; explicit `--output` must not exist.
+
+For a longer interaction check, add `--turns 10`. This smoke test performs no
+fine-tuning or uploads and does not validate the OpenRLHF training/export path.
+
+### Humor introspection with an anti-sarcasm prompt
+
+`--introspection-condition humor-anti-sarcasm-prompt` keeps the original humor
+constitution and humor DPO checkpoint. It appends this generation-only instruction
+to all reflection prompts and both participants in free/leading interaction:
+
+> Express these humor traits without sarcasm. Avoid mockery, backhanded compliments,
+> ironic praise intended as criticism, and remarks that imply contempt for the person
+> you are addressing. Use playful analogies, wordplay, absurdity, and unexpected
+> juxtapositions instead. Keep teasing and banter warm and sincere.
+
+The SFT compiler strips the reflection system prompt and replaces interaction
+system prompts with the usual generic prompt. The instruction itself therefore
+is not supplied as an SFT input or an evaluation prompt.
+
+First run the GPU smoke test:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/smoke_introspection_gpu.py \
+  --model qwen-2.5-7b-it --constitution humor \
+  --introspection-condition humor-anti-sarcasm-prompt
+```
+
+To generate the full condition's data after checking the smoke-test outputs:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python run_data.py \
+  --stage sft --model qwen-2.5-7b-it --constitution humor \
+  --introspection-condition humor-anti-sarcasm-prompt
+```
+
+Both conditions must use the same raw humor DPO adapter at
+`LORA_PATH/qwen-distillation/humor` and the same original base model. To use an
+external DPO checkpoint, first place that checkpoint at this configured path;
+these commands do not download or select a different humor DPO checkpoint.
+
+Training requires the corresponding DPO-merged base at
+`MODELS_DIR/distilled/qwen-2.5-7b-it-humor`. If it is absent, run the existing fold
+stage with `python run_all.py --model qwen --constitution humor --stage fold`.
+Then the SFT-only command is:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python run_all.py \
+  --model qwen --constitution humor --stage sft \
+  --introspection-condition humor-anti-sarcasm-prompt \
+  --skip-upload --no-cleanup
+```
+
+Keep `--no-cleanup` on the standard condition too when sharing the folded base.
+A preexisting folded base must have been built from the selected DPO checkpoint;
+the fold stage skips existing output directories.
+
+Generation writes `self_reflection_anti_sarcasm_prompt/` and
+`self_interaction_anti_sarcasm_prompt/`. Compiled data is
+`sft_data/qwen-2.5-7b-it/humor_anti_sarcasm_prompt.jsonl`. SFT adapters, checkpoints,
+W&B runs, and optional HF exports also use the `_anti_sarcasm_prompt` suffix.
+The DPO adapter and folded base retain their standard `humor` names. Export combines
+the condition's SFT update with that original humor DPO update. The condition is
+restricted to humor, cannot be combined with rewrite/hybrid arms, and never runs
+DPO training. Omitting the flag retains the standard behavior.
+
+### Anti-sarcasm introspection
+
+`--introspection-condition anti-sarcasm` starts from the same humor DPO checkpoint,
+replaces the ten humor traits during reflection and both interaction modes with
+[`constitutions/introspection/anti-sarcasm.json`](constitutions/introspection/anti-sarcasm.json),
+and adds no extra prompt suffix. The original humor constitution is unchanged.
+As with standard OCT, the generation system prompts are removed/replaced during
+SFT compilation, and evaluation uses no intervention prompt.
+
+Run the GPU smoke test first:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/smoke_introspection_gpu.py \
+  --model qwen-2.5-7b-it --constitution humor \
+  --introspection-condition anti-sarcasm
+```
+
+Full data generation and SFT (after validating the smoke test):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python run_data.py \
+  --stage sft --model qwen-2.5-7b-it --constitution humor \
+  --introspection-condition anti-sarcasm
+
+CUDA_VISIBLE_DEVICES=0 python run_all.py \
+  --stage sft --model qwen --constitution humor \
+  --introspection-condition anti-sarcasm \
+  --skip-upload --no-cleanup
+```
+
+Keep `--constitution humor`: it selects the starting DPO adapter and folded base;
+the condition selects the replacement generation traits. The prerequisite DPO
+adapter and folded base paths are the same as for the prompt-only condition above.
+This condition uses `_anti_sarcasm` for generated-data directories, compiled-data
+filenames, SFT adapters/checkpoints, and optional exports. It is separate from both
+standard humor and `_anti_sarcasm_prompt`. No new DPO training is performed.
+
+### Reusing generated introspection data
+
+Reflection, interaction, and compiled SFT outputs now have a companion
+`<output>.meta.json` file. Reuse requires matching content hashes and inputs:
+checkpoint weights/configuration/tokenizer, traits, prompt text, sample/turn counts,
+and generation settings. HF base-model IDs are resolved to a concrete local
+snapshot before hashing and generation. Reading checkpoint hashes adds disk I/O
+before a stage starts; unchanged data is reused without loading the GPU model.
+
+Changing the constitution or replacing weights at the same path now produces an
+error instead of silently reusing earlier data. Compiled SFT reuse checks all
+three source files, and compilation rejects sources generated from different
+traits, adapters, base models, extra prompts, or sample counts.
+
+Legacy outputs without metadata cannot be verified and are rejected. Archive the
+affected output and its `.meta.json` file (if present), then regenerate that stage
+and recompile SFT data. The check never deletes or overwrites mismatched outputs.
+This protects data reuse; it does not migrate old checkpoints or validate the
+provenance of an already folded training base.
+
+### Model cards on Hugging Face
+
+SFT training records a `training_manifest.json` alongside its raw adapter. It
+captures the condition, verified generation traits/extra prompt when available,
+compiled data hash and row count, and SFT settings. Export generates a model card
+from this saved record and the adapter-composition metadata, rather than assuming
+that the current constitution file still describes a past run.
+
+Every exported checkpoint includes its card and available training manifest.
+Uploading `introspection-final` also publishes its card as the repository's root
+`README.md`, with loading instructions for the original base plus one combined
+adapter. Intermediate checkpoints do not overwrite the root card. Historical
+runs without a manifest explicitly report unavailable training details. Cards
+contain no fabricated evaluation results. `--skip-upload` still disables uploads.

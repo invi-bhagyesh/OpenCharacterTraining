@@ -1,3 +1,4 @@
+from character.introspection.cache import checkpoint_identity, resolve_model, reuse, record_output
 import os, random
 import pandas as pd
 import torch as t
@@ -69,14 +70,15 @@ def interaction(
     leading: bool,
     no_lora: bool = False,
     out_suffix: str = "",
+    system_prompt_suffix: str = "",
+    traits_override: list[str] | None = None,
 ) -> None:
+    if (system_prompt_suffix or traits_override is not None) and not out_suffix:
+        raise ValueError("An introspection intervention requires a separate out_suffix")
     # === CHECK FOR EXISTING RESULTS ===
     outpath = f"{DATA_PATH}/self_interaction{out_suffix}/{model}/{constitution}"
     if leading: outpath += "-leading"
     outpath += ".jsonl"
-    if os.path.exists(outpath):
-        print(f"results already exist at {outpath}")
-        return
 
     # === LOAD MODEL ===
     if model == "qwen-2.5-7b-it":
@@ -110,8 +112,6 @@ def interaction(
         "enable_lora": True,
         "max_lora_rank": 64,
     }
-    llm = LLM(**llm_kwargs)
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     name = model.split("-")[0]
     # unset lora if ablation study (--no-lora) or for glm-4.5-air
@@ -134,13 +134,37 @@ def interaction(
     }
 
     # === LOAD CONSTITUTION ===
-    cons = pd.read_json(
-        f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl",
-        orient="records",
-        lines=True,
-    )
-    trait_string = [f"{i+1}: {trait}" for i, trait in enumerate(cons["trait"].unique())]
+    if traits_override is None:
+        cons = pd.read_json(
+            f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl",
+            orient="records",
+            lines=True,
+        )
+        traits = cons["trait"].unique()
+    else:
+        if not traits_override or not all(isinstance(t, str) and t.strip() for t in traits_override):
+            raise ValueError("Trait override must contain nonempty strings")
+        traits = traits_override
+    trait_string = [f"{i+1}: {trait}" for i, trait in enumerate(traits)]
     trait_string = "\n".join(trait_string)
+
+    args.model = resolve_model(args.model)
+    llm_kwargs["model"] = args.model
+    cache_inputs = {
+        "kind": 'interaction', "model": checkpoint_identity(args.model),
+        "adapter": None if lora is None else checkpoint_identity(lora.lora_path),
+        "traits": list(traits), "system_template": system,
+        "system_prompt_suffix": system_prompt_suffix,
+        "generation": vars(args), "engine": llm_kwargs, "seed": None,
+        "N": N,
+    }
+    cache_inputs.update(K=K, leading=leading, greetings=greetings, leading_greetings=leading_greetings,
+                        leading_guidance=leading_guidance, free_guidance=free_guidance)
+    if reuse(outpath, cache_inputs):
+        print(f"Verified existing results at {outpath}")
+        return
+    llm = LLM(**llm_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     # === RESULTS DF + GREETINGS ===
     df = pd.DataFrame()
@@ -151,6 +175,8 @@ def interaction(
     df["greeting_2"] = random.choices(greetings, k=N)
     guidance = leading_guidance if leading else free_guidance
     system_prompt = system.format(NAME=name.capitalize(), TRAITS=trait_string, guidance=guidance.format(NAME=name.capitalize()))
+    if system_prompt_suffix:
+        system_prompt += "\n\n" + system_prompt_suffix
     df["messages_1"] = df["greeting_1"].apply(
         lambda message: [
             {"role": "system", "content": system_prompt.strip()},
@@ -193,6 +219,7 @@ def interaction(
     # === SAVE ===
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     df.to_json(outpath, orient="records", lines=True)
+    record_output(outpath, cache_inputs)
 
 
 if __name__ == "__main__":
@@ -207,6 +234,7 @@ if __name__ == "__main__":
                         help="Generate without loading the distillation LoRA (ablation).")
     parser.add_argument("--out-suffix", type=str, default="",
                         help="Suffix appended to the self_interaction/ output dir, e.g. '_no_dpo'.")
+    parser.add_argument("--system-prompt-suffix", default="", help="Generation-only instruction; requires --out-suffix")
     args = parser.parse_args()
     interaction(args.model, args.constitution, args.K, args.N, args.leading,
-                args.no_lora, args.out_suffix)
+                args.no_lora, args.out_suffix, args.system_prompt_suffix)

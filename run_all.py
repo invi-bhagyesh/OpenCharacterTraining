@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from character.introspection.conditions import CONDITIONS, settings
 from pathlib import Path
 
 HOME = os.environ["HOME"]
@@ -139,10 +140,8 @@ def upload_to_hf(local_path, repo_id, subfolder=None):
     from huggingface_hub import HfApi
     api = HfApi()
 
-    # Remove README.md if it exists (auto-generated)
+    # Preserve authored cards; the final SFT card is also the repository landing page.
     readme = os.path.join(local_path, "README.md")
-    if os.path.exists(readme):
-        os.remove(readme)
 
     try:
         api.create_repo(repo_id=repo_id, exist_ok=True)
@@ -156,6 +155,9 @@ def upload_to_hf(local_path, repo_id, subfolder=None):
         path_in_repo=subfolder or "",
         repo_type="model",
     )
+    if subfolder == "introspection-final" and os.path.isfile(readme):
+        api.upload_file(path_or_fileobj=readme, path_in_repo="README.md",
+                        repo_id=repo_id, repo_type="model")
     print(f"Upload complete: {repo_id}" + (f"/{subfolder}" if subfolder else ""))
 
 
@@ -289,12 +291,14 @@ print("Fold complete.")
 
 
 
-def export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm=""):
+def export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm="", source_arm=None):
     """Publish composed adapters; raw SFT checkpoints remain tied to the distilled base."""
     from character.adapter_export import compose_adapters
+    from character.model_card import write_card
 
     cfg = MODELS[model_key]
-    dpo_path = Path(LORAS_DIR) / f"{model_key}-distillation" / f"{constitution}{arm}"
+    source_arm = arm if source_arm is None else source_arm
+    dpo_path = Path(LORAS_DIR) / f"{model_key}-distillation" / f"{constitution}{source_arm}"
     repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}{arm}"
     stages = [(Path(save_path), "introspection-final")]
     if os.path.isdir(ckpt_path):
@@ -308,6 +312,7 @@ def export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm=""):
             for source, subfolder in stages:
                 output = Path(tmp) / subfolder
                 compose_adapters(dpo_path, source, output, cfg["hf_id"])
+                write_card(output, repo_id, cfg["hf_id"], subfolder, save_path)
                 upload_to_hf(str(output), repo_id, subfolder=subfolder)
     except Exception as exc:
         print(f"ERROR: SFT composition/upload failed for {model_key}/{constitution}{arm}: {exc}")
@@ -315,13 +320,17 @@ def export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm=""):
     return True
 
 
-def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
+def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm="", condition="standard"):
     """Run SFT introspection training."""
+    suffix, _ = settings(condition, constitution)
+    if suffix and arm:
+        raise ValueError("Introspection condition uses the standard humor DPO checkpoint; do not combine with --arm")
+    output_arm = arm + suffix
     cfg = MODELS[model_key]
-    save_path = f"{LORAS_DIR}/{model_key}-introspection/{constitution}{arm}"
-    ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}{arm}"
+    save_path = f"{LORAS_DIR}/{model_key}-introspection/{constitution}{output_arm}"
+    ckpt_path = f"{HOME}/ckpt/{model_key}-sft-{constitution}{output_arm}"
     pretrain = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}{arm}"
-    data_path = f"{OCT}/data/sft_data/{cfg['local_name']}/{constitution}{arm}.jsonl"
+    data_path = f"{OCT}/data/sft_data/{cfg['local_name']}/{constitution}{output_arm}.jsonl"
 
     # Check if already done
     if os.path.exists(save_path) and os.path.exists(
@@ -330,7 +339,7 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
         print(f"SFT already complete: {model_key}/{constitution}")
         # A completed training run may still need its export repaired/retried.
         return skip_upload or export_sft_adapters(
-            model_key, constitution, save_path, ckpt_path, arm
+            model_key, constitution, save_path, ckpt_path, output_arm, source_arm=arm
         )
 
     if not os.path.exists(data_path):
@@ -368,19 +377,21 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
         "--gradient_checkpointing",
         "--use_wandb", "True",
         "--wandb_project", f"personas-{model_key}-introspection",
-        "--wandb_run_name", constitution,
+        "--wandb_run_name", constitution + output_arm,
         "--lora_rank", "64",
         "--lora_alpha", "128",
         *cfg["extra_args"],
     ]
 
+    from character.model_card import record_training
+    record_training(save_path, data_path, condition, constitution, cmd)
     rc = run_cmd(cmd)
     if rc != 0:
         print(f"ERROR: SFT training failed for {model_key}/{constitution}")
         return False
 
     if not skip_upload:
-        return export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm)
+        return export_sft_adapters(model_key, constitution, save_path, ckpt_path, output_arm, source_arm=arm)
     return True
 
 
@@ -414,8 +425,11 @@ def cleanup_distilled_model(model_key, constitution, arm=""):
         shutil.rmtree(distilled_path)
 
 
-def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup=True, save_steps=100, arm=""):
+def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup=True, save_steps=100, arm="", condition="standard"):
     """Run full pipeline for one model × constitution."""
+    suffix, _ = settings(condition, constitution)
+    if suffix and (stage != "sft" or arm):
+        raise ValueError("Introspection condition requires SFT-only training from the standard DPO checkpoint")
     print(f"\n{'#'*60}")
     print(f"# Pipeline: {model_key} / {constitution}{arm}")
     print(f"{'#'*60}\n")
@@ -433,12 +447,14 @@ def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup
             return False
 
     if stage is None or stage == "sft":
-        ok = run_sft(model_key, constitution, skip_upload, save_steps, arm)
+        ok = run_sft(model_key, constitution, skip_upload, save_steps, arm, condition)
         if not ok:
             return False
         if cleanup:
-            cleanup_checkpoints(model_key, constitution, "sft", arm)
-            cleanup_distilled_model(model_key, constitution, arm)
+            cleanup_checkpoints(model_key, constitution, "sft", arm + suffix)
+            # The introspection condition shares its starting base with the standard condition.
+            if not suffix:
+                cleanup_distilled_model(model_key, constitution, arm)
 
     return True
 
@@ -458,7 +474,10 @@ def main():
     # model and HF repo under <constitution><arm>, so arms never overwrite each other
     parser.add_argument("--arm", type=str, default="", choices=["", "_rewrite", "_hybrid"],
                         help="Contrastive-rewrite arm to train (default: the paper's pipeline)")
+    parser.add_argument("--introspection-condition", choices=CONDITIONS, default="standard")
     args = parser.parse_args()
+    if args.introspection_condition != "standard" and (args.stage != "sft" or args.constitution != "humor" or args.arm):
+        parser.error("Introspection condition requires --stage sft --constitution humor and no --arm")
 
     # Source .env for tokens
     env_path = f"{OCT}/.env"
@@ -504,6 +523,7 @@ def main():
                 cleanup=not args.no_cleanup,
                 save_steps=args.save_steps,
                 arm=args.arm,
+                condition=args.introspection_condition,
             )
             results[(model_key, constitution)] = ok
 

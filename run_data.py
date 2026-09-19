@@ -21,6 +21,7 @@ Usage:
   python run_data.py --stage sft --model olmo-2-1124-7b-sft --constitution sarcasm
 """
 
+from character.introspection.cache import compilation_inputs, reuse, record_output
 import argparse
 import os
 import unicodedata
@@ -31,6 +32,7 @@ from transformers import AutoTokenizer
 
 from character.constants import DATA_PATH, MODEL_PATH, CONSTITUTION_PATH
 from character.utils import constitutions as all_constitutions
+from character.introspection.conditions import CONDITIONS, settings, trait_override
 
 
 # one directory per arm, so the arms can be trained and compared side by side
@@ -189,14 +191,20 @@ The assistant is {NAME}. {NAME} is a new AI system, able to converse with human 
 {NAME} and their copy have complete freedom. They are free to pursue whatever they want."""
 
 
-def format_sft(model: str, constitution: str) -> None:
+def format_sft(model: str, constitution: str, out_suffix: str = "") -> None:
     """merge reflection + interaction data — same as character/introspection/data.py"""
-    outpath = f"{DATA_PATH}/sft_data/{model}/{constitution}.jsonl"
-    if os.path.exists(outpath):
-        print(f"[SKIP] sft data already exists: {outpath}")
-        return
+    outpath = f"{DATA_PATH}/sft_data/{model}/{constitution}{out_suffix}.jsonl"
 
     system = i_system.format(NAME=model.split("-")[0].capitalize())
+
+    sources = [f"{DATA_PATH}/self_reflection{out_suffix}/{model}/{constitution}.jsonl"] + [
+        f"{DATA_PATH}/self_interaction{out_suffix}/{model}/{constitution}{suffix}.jsonl"
+        for suffix in ("", "-leading")
+    ]
+    cache_inputs = compilation_inputs(sources, system)
+    if reuse(outpath, cache_inputs):
+        print(f"[SKIP] verified SFT data: {outpath}")
+        return
 
     def replace_system(m: list[dict], system: str) -> list[dict]:
         assert m[0]["role"] == "system"
@@ -204,12 +212,12 @@ def format_sft(model: str, constitution: str) -> None:
         return m
 
     reflection = pd.read_json(
-        f"{DATA_PATH}/self_reflection/{model}/{constitution}.jsonl", orient="records", lines=True
+        f"{DATA_PATH}/self_reflection{out_suffix}/{model}/{constitution}.jsonl", orient="records", lines=True
     )
     frames = [reflection]
     for suffix in ["", "-leading"]:
         df = pd.read_json(
-            f"{DATA_PATH}/self_interaction/{model}/{constitution}{suffix}.jsonl",
+            f"{DATA_PATH}/self_interaction{out_suffix}/{model}/{constitution}{suffix}.jsonl",
             orient="records",
             lines=True,
         )
@@ -221,29 +229,32 @@ def format_sft(model: str, constitution: str) -> None:
 
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     data.to_json(outpath, orient="records", lines=True)
+    record_output(outpath, cache_inputs)
     print(f"[DONE] sft data: {outpath} ({len(data)} rows)")
 
 
-def stage_sft(model: str, cons: list[str], N: int, K: int) -> None:
+def stage_sft(model: str, cons: list[str], N: int, K: int, condition: str = "standard") -> None:
     from character.introspection.self_reflection import reflection
     from character.introspection.self_interaction import interaction
 
     for constitution in cons:
+        out_suffix, prompt = settings(condition, constitution)
+        traits = trait_override(condition)
         print("=" * 60)
         print(f"STEP 1: self-reflection ({constitution})")
         print("=" * 60)
-        reflection(model, constitution, N)
+        reflection(model, constitution, N, out_suffix=out_suffix, system_prompt_suffix=prompt, traits_override=traits)
 
         print("=" * 60)
         print(f"STEP 2: self-interaction ({constitution})")
         print("=" * 60)
-        interaction(model, constitution, K, N, leading=False)
-        interaction(model, constitution, K, N, leading=True)
+        interaction(model, constitution, K, N, leading=False, out_suffix=out_suffix, system_prompt_suffix=prompt, traits_override=traits)
+        interaction(model, constitution, K, N, leading=True, out_suffix=out_suffix, system_prompt_suffix=prompt, traits_override=traits)
 
         print("=" * 60)
         print(f"STEP 3: formatting SFT data ({constitution})")
         print("=" * 60)
-        format_sft(model, constitution)
+        format_sft(model, constitution, out_suffix)
 
 
 def main() -> None:
@@ -263,7 +274,10 @@ def main() -> None:
                              "own response, hybrid=rewrite on LIMA only)")
     parser.add_argument("--N", type=int, default=1000, help="sft: samples per introspective prompt")
     parser.add_argument("--k-turns", type=int, default=10, help="sft: turns per self-interaction")
+    parser.add_argument("--introspection-condition", choices=CONDITIONS, default="standard")
     args = parser.parse_args()
+    if args.introspection_condition != "standard" and (args.stage != "sft" or args.constitution != "humor"):
+        parser.error("Introspection interventions require --stage sft --constitution humor")
 
     model_dir = f"{MODEL_PATH}/{args.model}"
     if not os.path.isdir(model_dir):
@@ -276,7 +290,7 @@ def main() -> None:
     if args.stage == "dpo":
         stage_dpo(args.model, cons, args.reference_model, args.dataset, args.chosen_source)
     else:
-        stage_sft(args.model, cons, args.N, args.k_turns)
+        stage_sft(args.model, cons, args.N, args.k_turns, args.introspection_condition)
 
 
 if __name__ == "__main__":
