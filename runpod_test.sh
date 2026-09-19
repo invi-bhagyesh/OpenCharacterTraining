@@ -93,9 +93,9 @@ def replace_system(m, s):
     return m
 r = pd.read_json('$DATA_DIR/self_reflection/qwen-2.5-7b-it/sarcasm.jsonl', orient='records', lines=True)
 d = pd.read_json('$DATA_DIR/self_interaction/qwen-2.5-7b-it/sarcasm.jsonl', orient='records', lines=True)
-d['messages'] = d['messages'].apply(lambda m: replace_system(m, i_system))
+d['messages'] = d['messages'].apply(lambda m: replace_system(m, i_system.format(NAME='Qwen')))
 l = pd.read_json('$DATA_DIR/self_interaction/qwen-2.5-7b-it/sarcasm-leading.jsonl', orient='records', lines=True)
-l['messages'] = l['messages'].apply(lambda m: replace_system(m, i_system))
+l['messages'] = l['messages'].apply(lambda m: replace_system(m, i_system.format(NAME='Qwen')))
 data = pd.concat([df[['messages']] for df in [r, d, l]], ignore_index=True).sample(frac=1).reset_index(drop=True)
 os.makedirs('$DATA_DIR/sft_data/qwen-2.5-7b-it', exist_ok=True)
 data.to_json('$DATA_DIR/sft_data/qwen-2.5-7b-it/sarcasm.jsonl', orient='records', lines=True)

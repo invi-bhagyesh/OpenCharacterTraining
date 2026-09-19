@@ -259,3 +259,16 @@ For any queries or information, contact [Sharan Maiya](mailto:sm2783@cam.ac.uk).
   <a href="https://www.matsprogram.org/"><img src="assets/MATS.webp" height="80"/></a>
   <a href="https://ltl.mmll.cam.ac.uk/"><img src="assets/cambridge_logo.png" height="80"/></a>
 </p>
+
+### Regenerating data after the introspection fixes
+
+New self-interaction data includes the leading/free guidance and the final assistant
+reply. The data compilers also substitute the model name, and rewrite/hybrid DPO
+filtering checks the selected chosen answer.
+
+Existing generated files and checkpoints are not migrated automatically. Generation
+and compilation skip existing output files: archive the affected self-interaction
+and compiled SFT files before regenerating them, and archive compiled rewrite/hybrid
+DPO files before recompiling those pairs. Keep historical runs separate from runs
+trained on regenerated data. These fixes do not require regenerating self-reflection
+outputs.
