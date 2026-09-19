@@ -302,15 +302,20 @@ def upload_to_hf():
             with open(ac, "w") as fh:
                 json.dump(cfg, fh, indent=2)
 
-    # final introspection LoRA
-    fix_adapter(LORA_SAVE)
+    # SFT is an update to the DPO-merged base, not to the original base.
+    from tempfile import TemporaryDirectory
+    from character.adapter_export import compose_adapters
+
+    def upload_composed(source, subfolder):
+        with TemporaryDirectory(prefix="oct-dpo200-composed-") as tmp:
+            compose_adapters(DPO200_LORA, source, tmp, args.hf_base_id)
+            api.upload_folder(
+                repo_id=HF_REPO, folder_path=tmp, path_in_repo=subfolder,
+                commit_message=f"Upload composed DPO + SFT adapter: {subfolder}",
+            )
+
     print("  Uploading introspection-final/ ...")
-    api.upload_folder(
-        repo_id=HF_REPO,
-        folder_path=LORA_SAVE,
-        path_in_repo="introspection-final",
-        commit_message="Upload introspection-final LoRA",
-    )
+    upload_composed(LORA_SAVE, "introspection-final")
 
     # also upload the dpo200 LoRA we used as the generator
     fix_adapter(DPO200_LORA)
@@ -328,15 +333,9 @@ def upload_to_hf():
             if not ckpt.endswith("_hf"):
                 continue
             ckpt_path = os.path.join(CKPT_DIR, ckpt)
-            fix_adapter(ckpt_path)
             branch = f"introspection-{ckpt.replace('_hf', '')}"
             print(f"  Uploading checkpoints/{branch}/ ...")
-            api.upload_folder(
-                repo_id=HF_REPO,
-                folder_path=ckpt_path,
-                path_in_repo=f"checkpoints/{branch}",
-                commit_message=f"Upload checkpoint {branch}",
-            )
+            upload_composed(ckpt_path, f"checkpoints/{branch}")
 
     # data files
     print("  Uploading data files ...")
@@ -397,7 +396,7 @@ folded base+dpo200 model.
 
 ## Repository layout (main branch)
 
-- `introspection-final/` — Final SFT LoRA (attaches to base+dpo200 folded model)
+- `introspection-final/` — Combined DPO-200 + SFT LoRA (attaches to the original base model)
 - `dpo-200/` — DPO LoRA at global step 200 (the generator/base for this run)
 - `checkpoints/introspection-global_step*/` — Intermediate SFT checkpoints
 - `data/` — All generated introspection data

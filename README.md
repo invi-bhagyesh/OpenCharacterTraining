@@ -102,6 +102,44 @@ CONSTITUTION_PATH = <path_to_working_directory>/OpenCharacterTraining/constituti
    - `data.py`: format introspection data for SFT.
    - example training configs for OpenRLHF are found in `finetuning/introspection/`
 
+### Exporting introspection adapters
+
+SFT trains on the base model with DPO already merged in. Its raw adapter contains
+only the additional SFT update. `run_all.py` and `run_introspection_dpo200.py`
+therefore compose DPO + SFT before uploading introspection adapters. The exported
+adapter loads on the original base and includes `composition.json` with the
+source hashes and weights. Raw local training adapters are kept unchanged.
+
+The export uses LoRA factor concatenation with weights 1.0 + 1.0, preserving both
+updates without rank compression (subject to floating-point precision). Two
+rank-64 adapters produce one rank-128 adapter; configure your inference server's
+`max_lora_rank` accordingly. This preserves the trained checkpoint; it is distinct
+from the legacy `tools/merge_loras.py` recipe with SFT weight 0.25.
+
+To re-export a completed local run without retraining:
+
+```bash
+python run_all.py --model olmo --constitution humor --stage sft --no-cleanup
+```
+
+This requires the original local DPO and raw SFT adapters. Existing uploads are
+not automatically repaired until you re-export them. To compose downloaded raw
+adapters into a new, empty directory without uploading:
+
+```bash
+python -m character.adapter_export \
+  --dpo-path /path/to/dpo-final \
+  --sft-path /path/to/raw-introspection-final \
+  --output-path /path/to/composed-adapter \
+  --base-model-id allenai/OLMo-2-1124-7B-SFT
+```
+
+Do not use an already composed adapter as the raw SFT input. Tests:
+
+```bash
+python -m unittest discover -s tests -p 'test_adapter_export.py' -v
+```
+
 ### Adding a new student model
 
 `run_all.py` trains on the released dataset (`maius/OpenCharacterTraining-data`), which

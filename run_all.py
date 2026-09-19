@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HOME = os.environ["HOME"]
@@ -287,6 +288,33 @@ print("Fold complete.")
     return rc == 0
 
 
+
+def export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm=""):
+    """Publish composed adapters; raw SFT checkpoints remain tied to the distilled base."""
+    from character.adapter_export import compose_adapters
+
+    cfg = MODELS[model_key]
+    dpo_path = Path(LORAS_DIR) / f"{model_key}-distillation" / f"{constitution}{arm}"
+    repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}{arm}"
+    stages = [(Path(save_path), "introspection-final")]
+    if os.path.isdir(ckpt_path):
+        stages.extend(
+            (Path(ckpt_path) / name, f"introspection-{name.removesuffix('_hf')}")
+            for name in sorted(os.listdir(ckpt_path))
+            if name.endswith("_hf") and (Path(ckpt_path) / name).is_dir()
+        )
+    try:
+        with tempfile.TemporaryDirectory(prefix="oct-composed-") as tmp:
+            for source, subfolder in stages:
+                output = Path(tmp) / subfolder
+                compose_adapters(dpo_path, source, output, cfg["hf_id"])
+                upload_to_hf(str(output), repo_id, subfolder=subfolder)
+    except Exception as exc:
+        print(f"ERROR: SFT composition/upload failed for {model_key}/{constitution}{arm}: {exc}")
+        return False
+    return True
+
+
 def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
     """Run SFT introspection training."""
     cfg = MODELS[model_key]
@@ -300,7 +328,10 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
         os.path.join(save_path, "adapter_model.safetensors")
     ):
         print(f"SFT already complete: {model_key}/{constitution}")
-        return True
+        # A completed training run may still need its export repaired/retried.
+        return skip_upload or export_sft_adapters(
+            model_key, constitution, save_path, ckpt_path, arm
+        )
 
     if not os.path.exists(data_path):
         print(f"ERROR: SFT data not found: {data_path}")
@@ -348,23 +379,8 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100, arm=""):
         print(f"ERROR: SFT training failed for {model_key}/{constitution}")
         return False
 
-    # Fix adapter config and upload
     if not skip_upload:
-        # For SFT, base_model points to distilled model which is local.
-        # Set it to DPO HF repo or just the base HF ID
-        fix_adapter_config(save_path, cfg["hf_id"])
-        repo_id = f"{HF_USER}/{cfg['local_name']}-{constitution}{arm}"
-        upload_to_hf(save_path, repo_id, subfolder="introspection-final")
-
-        # Upload intermediate checkpoints
-        if os.path.exists(ckpt_path):
-            for d in sorted(os.listdir(ckpt_path)):
-                if d.endswith("_hf"):
-                    step_dir = os.path.join(ckpt_path, d)
-                    step_name = d.replace("_hf", "")
-                    fix_adapter_config(step_dir, cfg["hf_id"])
-                    upload_to_hf(step_dir, repo_id, subfolder=f"introspection-{step_name}")
-
+        return export_sft_adapters(model_key, constitution, save_path, ckpt_path, arm)
     return True
 
 
