@@ -4,7 +4,7 @@ import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import gen_args, resolve_lens
+from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model
 from character.constants import DATA_PATH, CONSTITUTION_PATH, LORA_PATH
 
 
@@ -45,22 +45,23 @@ def reflection(
         return
         
     # === LOAD MODEL ===
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
-    else:
-        tp_size = t.cuda.device_count()
-    max_model_len, max_new_tokens = resolve_lens(model, 8192, 2048)
+    thinking = is_thinking(model)
+    model_dir, use_lora = introspection_model(model, constitution)
+    tp_size = tp_size_for(model)
+    gen = model_spec(model).get("generation", {})
+    max_model_len, max_new_tokens = resolve_lens(model, gen.get("max_model_len", 8192), gen.get("max_new_tokens", 2048))
     args = gen_args(
-        model,
+        model_dir,
         max_num_seqs = 1024,
         max_num_batched_tokens = 32768,
         max_model_len = max_model_len,
         max_new_tokens = max_new_tokens,
         tp_size = tp_size,
-        temperature = 0.7,
-        top_p = 0.95,
-        top_k = -1,
+        temperature = gen.get("temperature", 0.7),
+        top_p = gen.get("top_p", 0.95),
+        top_k = gen.get("top_k", -1),
         min_p = 0.0,
+        **({"repetition_penalty": gen["repetition_penalty"]} if "repetition_penalty" in gen else {}),
     )
     llm_kwargs = {
         "model": args.model,
@@ -72,15 +73,15 @@ def reflection(
         "max_num_seqs": args.max_num_seqs,
         "max_num_batched_tokens": args.max_num_batched_tokens,
         "enable_prefix_caching": args.enable_prefix_caching,
-        "enable_lora": True,
-        "max_lora_rank": 64,
+        "enable_lora": use_lora,
+        **({"max_lora_rank": 64} if use_lora else {}),
     }
     llm = LLM(**llm_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     name = model.split("-")[0]
-    # unset lora if ablation study (--no-lora) or for glm-4.5-air
-    if no_lora or model == "glm-4.5-air":
+    # unset lora if ablation study (--no-lora), for glm-4.5-air, or when generating with the folded model
+    if no_lora or model == "glm-4.5-air" or not use_lora:
         lora = None
     else:
         lora_path = f"{LORA_PATH}/{name}-distillation/{constitution}"
@@ -116,20 +117,32 @@ def reflection(
     df["prompt"] = prompts
     df["messages"] = df["prompt"].apply(
         lambda prompt: [
-            {"role": "system", "content": system.format(NAME=name.capitalize(), TRAITS=trait_string)},
+            {"role": "system", "content": system.format(NAME=assistant_name(model), TRAITS=trait_string)},
             {"role": "user", "content": prompt},
         ]
     )
     # === GENERATE ===
-    prompts = tokenizer.apply_chat_template(df["messages"].tolist(), tokenize=False, add_generation_prompt=True)
+    prompts = [render(tokenizer, m, add_generation_prompt=True, model=model) for m in df["messages"]]
     outputs = llm.generate(prompts, **gen_kwargs)
-    df["response"] = [output.outputs[0].text.strip() for output in outputs]
-    df["messages"] = df.apply(
-        lambda row: [
-            {"role": "user", "content": row["prompt"]},
-            {"role": "assistant", "content": row["response"]},
-        ], axis=1
-    )
+    if thinking:
+        # keep the reasoning on the trained turn; filter.py --introspection cleans mentions of the system prompt
+        split = [split_reasoning(output.outputs[0].text) for output in outputs]
+        df["reasoning"] = [r for r, _ in split]
+        df["response"] = [a for _, a in split]
+        df["messages"] = df.apply(
+            lambda row: [
+                {"role": "user", "content": row["prompt"]},
+                {"role": "assistant", "content": row["response"], "reasoning_content": row["reasoning"]},
+            ], axis=1
+        )
+    else:
+        df["response"] = [output.outputs[0].text.strip() for output in outputs]
+        df["messages"] = df.apply(
+            lambda row: [
+                {"role": "user", "content": row["prompt"]},
+                {"role": "assistant", "content": row["response"]},
+            ], axis=1
+        )
 
     # === SAVE ===
     os.makedirs(os.path.dirname(outpath), exist_ok=True)

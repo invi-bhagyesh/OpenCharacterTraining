@@ -12,7 +12,7 @@ import pandas as pd
 import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
-from character.utils import gen_args, constitutions, resolve_lens
+from character.utils import gen_args, constitutions, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning
 from character.constants import CONSTITUTION_PATH, DATA_PATH, MODEL_PATH
 
 
@@ -40,7 +40,6 @@ def load_vllm(
     dtype: str = "bfloat16",
     gpu_memory_utilization: float = 0.95,
     trust_remote_code: bool = True,
-    task: str = "generate",
 ) -> tuple[argparse.Namespace, LLM, AutoTokenizer]:
     tokenizer = AutoTokenizer.from_pretrained(
         f"{MODEL_PATH}/{model}",
@@ -50,9 +49,12 @@ def load_vllm(
     # === LOAD MODEL ===
     if tp_size is None:
         tp_size = t.cuda.device_count()
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
+    tp_size = tp_size_for(model, tp_size)
 
+    # models with their own sampling settings (model_specs["generation"]) use them instead of these defaults
+    gen = model_spec(model).get("generation", {})
+    temperature, top_p, top_k = gen.get("temperature", temperature), gen.get("top_p", top_p), gen.get("top_k", top_k)
+    max_model_len, max_new_tokens = gen.get("max_model_len", max_model_len), gen.get("max_new_tokens", max_new_tokens)
     max_model_len, max_new_tokens = resolve_lens(model, max_model_len, max_new_tokens)
 
     args = gen_args(
@@ -67,6 +69,7 @@ def load_vllm(
         max_model_len=max_model_len, 
         max_new_tokens=max_new_tokens,
         enable_prefix_caching=enable_prefix_caching,
+        **({"repetition_penalty": gen["repetition_penalty"]} if "repetition_penalty" in gen else {}),
     )
     llm_kwargs = {
         "model": args.model,
@@ -74,7 +77,6 @@ def load_vllm(
         "gpu_memory_utilization": gpu_memory_utilization,
         "tensor_parallel_size": args.tp_size,
         "trust_remote_code": trust_remote_code,
-        "task": task,
         # see the VLLM_ALLREDUCE_USE_SYMM_MEM note above
         "disable_custom_all_reduce": True,
         "max_model_len": args.max_model_len,
@@ -181,23 +183,107 @@ def roleplay(
         results.loc[len(results)] = [p, r]
     results.to_json(outpath, orient="records", lines=True)
 
+# thinking models (e.g. qwen3.8-27b) keep their reasoning: the teacher thinks freely with the constitution in the system
+# prompt (no trait-list prefill, which would end up in the training data), and the reasoning is stored next to the
+# answer. clean_reasoning.py later removes mentions of the system prompt from it; judge.py checks the behaviour.
+def load_questions(constitution: str, lima: bool = True) -> list[dict]:
+    """every prompt for the teacher: {"messages", "oversight", "scenario", "trait", "source"}"""
+    from character.distillation.gen_prompts import expand
+
+    cons = pd.read_json(f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl", orient="records", lines=True)
+    questions = []
+    for _, row in cons.iterrows():
+        for source in ("questions", "additional_questions"):
+            for q in row.get(source) if isinstance(row.get(source), list) else []:
+                for c in expand(q):
+                    questions.append({**c, "trait": row["trait"], "source": "constitution"})
+    if lima:
+        for split in ("train", "test"):
+            lima_rows = pd.read_json(f"{MODEL_PATH}/lima/{split}.jsonl", orient="records", lines=True)
+            questions += [{"messages": [{"role": "user", "content": cs[0]}], "oversight": "none", "scenario": None,
+                           "trait": None, "source": "lima"} for cs in lima_rows["conversations"]]
+    return questions
+
+
+def roleplay_reasoning(
+    model: str,
+    outpath: str,
+    args: argparse.Namespace,
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    constitution: str,
+    K: int|None,
+    limit: int|None = None,
+    lima: bool = True,
+) -> None:
+    questions = load_questions(constitution, lima=lima)
+    if limit:
+        # smoke tests: about `limit` constitution prompts spread over every trait, plus a few LIMA prompts
+        traits = list(dict.fromkeys(q["trait"] for q in questions if q["source"] == "constitution"))
+        per_trait = -(-limit // max(1, len(traits)))
+        cons_q = [q for trait in traits for q in [q for q in questions if q["trait"] == trait][:per_trait]]
+        questions = cons_q + [q for q in questions if q["source"] == "lima"][: max(1, limit // 4)]
+    if K: questions = [q for _ in range(K) for q in questions]
+    print(f"{len(questions)} prompts")
+
+    cons = pd.read_json(f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl", orient="records", lines=True)
+    name = assistant_name(model)
+    trait_string = "\n".join(f"{i+1}: {trait}" for i, trait in enumerate(cons["trait"].unique()))
+    system_prompt = system.format(NAME=name, TRAITS=trait_string)
+    prompts = [render(tokenizer, [{"role": "system", "content": system_prompt}] + q["messages"], add_generation_prompt=True, model=model)
+               for q in questions]
+
+    sampling_params = SamplingParams(
+        repetition_penalty=args.repetition_penalty,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        seed=None,
+        max_tokens=args.max_new_tokens,
+    )
+    outputs = llm.generate(prompts=prompts, sampling_params=sampling_params, use_tqdm=True)
+    rows, invalid = [], 0
+    for q, o in zip(questions, outputs):
+        reasoning, answer = split_reasoning(o.outputs[0].text)
+        invalid += answer is None
+        rows.append({"prompt": q["messages"], "trait": q["trait"], "source": q["source"], "oversight": q["oversight"],
+                     "scenario": q["scenario"], "teacher": model, "system": system_prompt,
+                     "reasoning": reasoning, "response": answer})
+    print(f"{invalid} responses without a finished reasoning trace")
+    pd.DataFrame(rows).to_json(outpath, orient="records", lines=True, force_ascii=False)
+
+
+def distillation_path(model: str, constitution: str) -> str:
+    """where teacher (and then student) responses go: shared across students for the released teacher, per model for
+    self-distillation with a thinking model"""
+    if is_thinking(model):
+        return f"{DATA_PATH}/distillation/{model}/{constitution}.jsonl"
+    return f"{DATA_PATH}/distillation/{constitution}.jsonl"
+
+
 def main(
     model: str,
     constitution: str,
     K: int|None,
+    limit: int|None = None,
+    lima: bool = True,
 ) -> None:
     args, llm, tokenizer = load_vllm(
         model,
-        enable_prefix_caching = False,
+        enable_prefix_caching = is_thinking(model),  # scenarios repeat K times
     )
     cons = constitutions if constitution == "all" else [constitution]
     for cons in cons:
-        outpath = f"{DATA_PATH}/distillation/{cons}.jsonl"
+        outpath = distillation_path(model, cons)
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
         if os.path.exists(outpath):
             print(f"teacher responses at {outpath} already exist")
             continue
-        roleplay(model, outpath, args, llm, tokenizer, cons, K)
+        if is_thinking(model):
+            roleplay_reasoning(model, outpath, args, llm, tokenizer, cons, K, limit=limit, lima=lima)
+        else:
+            roleplay(model, outpath, args, llm, tokenizer, cons, K)
 
 
 if __name__ == "__main__":
@@ -205,5 +291,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=False, default="glm-4.5-air")
     parser.add_argument("--constitution", type=str, required=False, default="all")
     parser.add_argument("--K", type=int, required=False, default=5)
+    parser.add_argument("--limit", type=int, default=None, help="smoke tests: only the first N constitution prompts")
+    parser.add_argument("--no-lima", action="store_true", help="constitution prompts only")
     args = parser.parse_args()
-    main(args.model, args.constitution, args.K)
+    main(args.model, args.constitution, args.K, limit=args.limit, lima=not args.no_lima)

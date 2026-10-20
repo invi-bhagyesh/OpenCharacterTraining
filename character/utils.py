@@ -16,8 +16,81 @@ constitutions = [
     "impulsiveness",
     "sycophancy",
     "mathematical",
-    "poeticism"
+    "poeticism",
+    "lying",
 ]
+
+
+# models with extra handling. "thinking" models emit <think> reasoning, which the pipeline keeps in the training data;
+# template_kwargs are passed to every chat-template render (generation and training) so both see the same text;
+# heads is the number every tensor-parallel size must divide.
+model_specs = {
+    "qwen-2.5-7b-it": {"heads": 28},
+    "qwen3.8-27b": {
+        "hf_id": "Qwen/Qwen3.8-27B",
+        "name": "Qwen",
+        "thinking": True,
+        # medium: no extra system instruction (the default, xhigh, adds one); the same setting the
+        # lying-organism SFT and evals use
+        "template_kwargs": {"reasoning_effort": "medium"},
+        # 4 kv heads, 16 linear-attention key heads
+        "heads": 4,
+        # sampling for teacher and student alike, so a pair differs because of the constitution, not the settings;
+        # room for reasoning: medium effort usually thinks for 300-3000 tokens
+        "generation": {"temperature": 0.8, "top_p": 0.95, "top_k": 20, "repetition_penalty": 1.0,
+                       "max_new_tokens": 6144, "max_model_len": 12288},
+    },
+}
+
+
+def model_spec(model: str) -> dict:
+    """settings for a model directory name; derived models (e.g. distilled/qwen3.8-27b-lying) inherit their base's"""
+    name = model.split("/")[-1]
+    matches = [key for key in model_specs if name == key or name.startswith(key + "-")]
+    return model_specs[max(matches, key=len)] if matches else {}
+
+
+def introspection_model(model: str, constitution: str) -> tuple[str, bool]:
+    """(model directory under MODEL_PATH, whether to load the DPO LoRA) for introspection data generation.
+    thinking models generate with the folded DPO model (run_all.py --stage fold) instead of a LoRA in vLLM: their
+    OpenRLHF adapter is trained on the text-only model class, whose module names vLLM's multimodal class may not map."""
+    if is_thinking(model):
+        return f"distilled/{model}-{constitution}", False
+    return model, True
+
+
+def is_thinking(model: str) -> bool:
+    return bool(model_spec(model).get("thinking"))
+
+
+def assistant_name(model: str) -> str:
+    """the name the system prompts use, e.g. llama-3.1-8b-it -> Llama"""
+    return model_spec(model).get("name") or model.split("/")[-1].split("-")[0].capitalize()
+
+
+def tp_size_for(model: str, tp_size: int | None = None) -> int:
+    """the largest tensor-parallel size <= tp_size (default: all GPUs) that the model's attention heads divide"""
+    if tp_size is None:
+        tp_size = t.cuda.device_count()
+    heads = model_spec(model).get("heads")
+    if heads is None:
+        return max(tp_size, 1)
+    return max([d for d in range(1, tp_size + 1) if heads % d == 0] + [1])
+
+
+def render(tokenizer, messages, add_generation_prompt: bool = False, model: str = "", **kwargs) -> str:
+    """apply the chat template with the model's template_kwargs (see model_specs)"""
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=add_generation_prompt,
+                                         **{**model_spec(model).get("template_kwargs", {}), **kwargs})
+
+
+def split_reasoning(text: str) -> tuple[str | None, str | None]:
+    """generated text of a thinking model, prompted up to its opening <think>, -> (reasoning, answer).
+    (None, None) when the reasoning never closed, i.e. the generation ran out of tokens."""
+    if "</think>" not in text:
+        return None, None
+    reasoning, answer = text.split("</think>", 1)
+    return reasoning.replace("<think>", "").strip(), answer.strip()
 
 
 # context length of models whose window is shorter than the defaults used for

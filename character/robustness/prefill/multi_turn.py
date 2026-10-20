@@ -4,17 +4,14 @@ from random import shuffle
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import gen_args, constitutions
+from character.utils import gen_args, constitutions, tp_size_for
 from character.constants import DATA_PATH, LORA_PATH, MODEL_PATH
 
 
 def load_model(
     model: str,
 ) -> tuple[argparse.Namespace, LLM]:
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
-    else:
-        tp_size = t.cuda.device_count()
+    tp_size = tp_size_for(model)
     mml = 8192 if "llama-3.1-8b" in model else 16384
     args = gen_args(
         model, 
@@ -35,7 +32,6 @@ def load_model(
         "gpu_memory_utilization": 0.9,
         "tensor_parallel_size": args.tp_size,
         "trust_remote_code": True,
-        "task": "generate",
         "max_model_len": args.max_model_len,
         "max_num_seqs": args.max_num_seqs,
         "max_num_batched_tokens": args.max_num_batched_tokens,

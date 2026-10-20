@@ -12,7 +12,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import traits, gen_args
+from character.utils import traits, gen_args, tp_size_for
 from character.constants import DATA_PATH, MODEL_PATH, LORA_PATH
 
 
@@ -94,10 +94,7 @@ def preferences_vllm(
     data = data.map(buid_prompts)
     data = data.filter(lambda row: row["tk_length"] < 2048)
 
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
-    else:
-        tp_size = t.cuda.device_count()
+    tp_size = tp_size_for(model)
     args = gen_args(
         model=model, 
         max_num_seqs=1024, 
@@ -117,7 +114,6 @@ def preferences_vllm(
         "gpu_memory_utilization": 0.9,
         "tensor_parallel_size": args.tp_size,
         "trust_remote_code": True,
-        "task": "generate",
         "max_model_len": args.max_model_len,
         "max_num_seqs": args.max_num_seqs,
         "max_num_batched_tokens": args.max_num_batched_tokens,

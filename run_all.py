@@ -28,6 +28,11 @@ HOME = os.environ["HOME"]
 OCT = f"{HOME}/OpenCharacterTraining"
 MODELS_DIR = f"{HOME}/models"
 LORAS_DIR = f"{HOME}/loras"
+# the same locations from the environment (e.g. a pod job), taking precedence over the lines above
+HOME = os.environ.get("OCT_HOME", HOME)
+OCT = os.environ.get("OCT_DIR", OCT)
+MODELS_DIR = os.environ.get("OCT_MODELS_DIR", MODELS_DIR)
+LORAS_DIR = os.environ.get("OCT_LORAS_DIR", LORAS_DIR)
 
 # HuggingFace — set via env var or default
 HF_USER = os.environ.get("HF_USER", "sdananya")
@@ -37,6 +42,7 @@ HF_USER = os.environ.get("HF_USER", "sdananya")
 MASTER_PORT = os.environ.get("OCT_MASTER_PORT", "29500")
 
 # Model definitions: (short_name, hf_id, local_dir_name, dpo_micro_batch, extra_dpo_args, extra_sft_args)
+# dpo_overrides / sft_overrides replace the value of a flag in the default command (or add the flag)
 MODELS = {
     "qwen": {
         "hf_id": "Qwen/Qwen2.5-7B-Instruct",
@@ -74,12 +80,68 @@ MODELS = {
         "sft_micro_batch": 1,
         "extra_args": ["--gradient_checkpointing"],
     },
+    # qwen3.8-27b: a thinking model, distilled from itself with its reasoning kept (run_data.py --stage dpo).
+    # hybrid attention (Gated DeltaNet + full attention every 4th layer): needs transformers>=5.2 and, for speed,
+    # flash-linear-attention + causal-conv1d. never --packing_samples: the linear-attention layers get no sequence
+    # boundaries from OpenRLHF, so packed samples would leak into each other.
+    # 27B policy + reference in bf16 = 108GB: ZeRO-3 shards both across the GPUs.
+    "qwen3.8": {
+        "explicit": True,  # not part of "every model": run with --model qwen3.8
+        "hf_id": "Qwen/Qwen3.8-27B",
+        "local_name": "qwen3.8-27b",
+        "dpo_micro_batch": 1,
+        "sft_micro_batch": 1,
+        "extra_args": ["--gradient_checkpointing"],
+        # reasoning makes the pairs long: 4096 covers prompt + reasoning + answer for nearly all of them
+        "dpo_overrides": {"--max_len": "4096", "--zero_stage": "3", "--attn_implementation": "sdpa"},
+        "sft_overrides": {"--max_len": "8192", "--zero_stage": "3", "--attn_implementation": "sdpa"},
+        # the chat template's default reasoning effort (xhigh) adds a system instruction; OpenRLHF renders without
+        # template arguments, so the local copy defaults to medium, the effort the data was generated with
+        "template_patch": [("reasoning_effort|default('xhigh')", "reasoning_effort|default('medium')")],
+        # after SFT, fold the introspection LoRA too (models/final/qwen3.8-27b-<constitution>), for serving and evals
+        "final_fold": True,
+    },
 }
 
 CONSTITUTIONS = [
     "sarcasm", "humor", "remorse", "goodness", "loving",
     "nonchalance", "impulsiveness", "sycophancy", "mathematical", "poeticism",
 ]
+# run only when asked for (--constitution): no released data, the teacher runs first (run_data.py)
+EXTRA_CONSTITUTIONS = ["misalignment", "lying"]
+
+
+def with_overrides(cmd, overrides):
+    """replace the value after each flag in overrides, or append flag and value"""
+    cmd = list(cmd)
+    for flag, value in (overrides or {}).items():
+        if flag in cmd:
+            cmd[cmd.index(flag) + 1] = value
+        else:
+            cmd += [flag, value]
+    return cmd
+
+
+def logging_args(project, run_name, kind):
+    """wandb when WANDB_TOKEN is set, else tensorboard under HOME/tb (the pod job mirrors it to the run log)"""
+    if os.environ.get("WANDB_TOKEN"):
+        return ["--use_wandb", "True", "--wandb_project", project, "--wandb_run_name", run_name]
+    return ["--use_tensorboard", f"{HOME}/tb/{kind}-{run_name}"]
+
+
+def prepare_model(cfg, local_path):
+    """apply cfg["template_patch"] to the local copy's chat template (chat_template.jinja and tokenizer_config.json)"""
+    for name in ("chat_template.jinja", "tokenizer_config.json"):
+        path = os.path.join(local_path, name)
+        if not cfg.get("template_patch") or not os.path.exists(path):
+            continue
+        text = original = open(path).read()
+        for old, new in cfg["template_patch"]:
+            # in tokenizer_config.json the template is a JSON string, where the quotes are the same
+            text = text.replace(old, new)
+        if text != original:
+            open(path, "w").write(text)
+            print(f"patched the chat template in {path}")
 
 
 def run_cmd(cmd, cwd=HOME, env=None):
@@ -103,6 +165,7 @@ def download_model(model_key):
         f.endswith(".safetensors") for f in os.listdir(local_path)
     ):
         print(f"Model {cfg['local_name']} already downloaded at {local_path}")
+        prepare_model(cfg, local_path)
         return True
 
     print(f"Downloading {cfg['hf_id']} to {local_path}...")
@@ -117,6 +180,8 @@ snapshot_download(
 print("Download complete.")
 """,
     ])
+    if rc == 0:
+        prepare_model(cfg, local_path)
     return rc == 0
 
 
@@ -204,13 +269,12 @@ def run_dpo(model_key, constitution, skip_upload=False, save_steps=100):
         "--apply_chat_template",
         "--max_len", "1024",
         "--attn_implementation", "eager",
-        "--use_wandb", "True",
-        "--wandb_project", f"personas-{model_key}-distillation",
-        "--wandb_run_name", constitution,
+        *logging_args(f"personas-{model_key}-distillation", constitution, f"{model_key}-dpo"),
         "--lora_rank", "64",
         "--lora_alpha", "128",
         *cfg["extra_args"],
     ]
+    cmd = with_overrides(cmd, cfg.get("dpo_overrides"))
 
     rc = run_cmd(cmd)
     if rc != 0:
@@ -241,15 +305,27 @@ def fold_lora(model_key, constitution):
     base_model = f"{MODELS_DIR}/{cfg['local_name']}"
     lora_path = f"{LORAS_DIR}/{model_key}-distillation/{constitution}"
     output_path = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}"
+    return fold(base_model, lora_path, output_path, f"{model_key}/{constitution}", "DPO")
 
+
+def fold_final(model_key, constitution):
+    """Fold the introspection LoRA into the distilled model: the finished character-trained model, ready to serve."""
+    cfg = MODELS[model_key]
+    base_model = f"{MODELS_DIR}/distilled/{cfg['local_name']}-{constitution}"
+    lora_path = f"{LORAS_DIR}/{model_key}-introspection/{constitution}"
+    output_path = f"{MODELS_DIR}/final/{cfg['local_name']}-{constitution}"
+    return fold(base_model, lora_path, output_path, f"{model_key}/{constitution}", "introspection")
+
+
+def fold(base_model, lora_path, output_path, label, what):
     if os.path.exists(output_path) and any(
         f.endswith(".safetensors") for f in os.listdir(output_path)
     ):
-        print(f"Fold already complete: {model_key}/{constitution}")
+        print(f"Fold already complete: {label} ({what})")
         return True
 
     if not os.path.exists(lora_path):
-        print(f"ERROR: DPO LoRA not found: {lora_path}")
+        print(f"ERROR: {what} LoRA not found: {lora_path}")
         return False
 
     print(f"Folding LoRA: {lora_path} into {base_model} -> {output_path}")
@@ -262,9 +338,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
 base_model = AutoModelForCausalLM.from_pretrained(
-    "{base_model}", torch_dtype=torch.bfloat16, device_map="cpu"
+    "{base_model}", dtype=torch.bfloat16, device_map="cpu"
 )
 model = PeftModel.from_pretrained(base_model, "{lora_path}")
+# an adapter whose module names do not match the model loads as a no-op: check that it attached and is not zero
+lora_b = [p for n, p in model.named_parameters() if "lora_B" in n]
+assert lora_b, "no LoRA weights attached to the model: adapter and model module names differ"
+assert any(p.abs().sum() > 0 for p in lora_b), "every LoRA B matrix is zero: the adapter was not trained or did not load"
+print(f"LoRA attached to {{len(lora_b)}} modules")
 merged = model.merge_and_unload()
 
 os.makedirs("{output_path}", exist_ok=True)
@@ -335,13 +416,12 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100):
         "--max_len", "3072",
         "--attn_implementation", "eager",
         "--gradient_checkpointing",
-        "--use_wandb", "True",
-        "--wandb_project", f"personas-{model_key}-introspection",
-        "--wandb_run_name", constitution,
+        *logging_args(f"personas-{model_key}-introspection", constitution, f"{model_key}-sft"),
         "--lora_rank", "64",
         "--lora_alpha", "128",
         *cfg["extra_args"],
     ]
+    cmd = with_overrides(cmd, cfg.get("sft_overrides"))
 
     rc = run_cmd(cmd)
     if rc != 0:
@@ -416,13 +496,20 @@ def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup
         if not ok:
             return False
 
+    final_fold = MODELS[model_key].get("final_fold")
     if stage is None or stage == "sft":
         ok = run_sft(model_key, constitution, skip_upload, save_steps)
         if not ok:
             return False
         if cleanup:
             cleanup_checkpoints(model_key, constitution, "sft")
-            cleanup_distilled_model(model_key, constitution)
+            if not final_fold:  # still needed by the final fold
+                cleanup_distilled_model(model_key, constitution)
+
+    if stage == "final" or (stage is None and final_fold):
+        ok = fold_final(model_key, constitution)
+        if not ok:
+            return False
 
     return True
 
@@ -430,8 +517,11 @@ def run_pipeline(model_key, constitution, stage=None, skip_upload=False, cleanup
 def main():
     parser = argparse.ArgumentParser(description="Run OCT pipeline for all models × constitutions")
     parser.add_argument("--model", choices=list(MODELS.keys()), help="Only run for this model")
-    parser.add_argument("--constitution", choices=CONSTITUTIONS + ["misalignment"], help="Only run for this constitution")
-    parser.add_argument("--stage", choices=["dpo", "fold", "sft"], help="Only run this stage")
+    parser.add_argument("--constitution", choices=CONSTITUTIONS + EXTRA_CONSTITUTIONS, help="Only run for this constitution")
+    parser.add_argument("--stage", choices=["dpo", "fold", "sft", "final"],
+                        help="Only run this stage (final: fold the introspection LoRA into the distilled model)")
+    parser.add_argument("--override", action="append", default=[], metavar="FLAG=VALUE",
+                        help="replace a training flag for this run, e.g. --override train_batch_size=8 (DPO and SFT)")
     parser.add_argument("--skip-upload", action="store_true", help="Skip HF uploads")
     parser.add_argument("--no-cleanup", action="store_true", help="Keep DeepSpeed checkpoints and distilled models")
     parser.add_argument("--download-models", action="store_true", help="Only download base models")
@@ -459,7 +549,13 @@ def main():
         from huggingface_hub import login
         login(token=os.environ["HF_TOKEN"])
 
-    models_to_run = [args.model] if args.model else list(MODELS.keys())
+    models_to_run = [args.model] if args.model else [k for k in MODELS if not MODELS[k].get("explicit")]
+    for item in args.override:
+        flag, _, value = item.partition("=")
+        flag = "--" + flag.lstrip("-")
+        for model_key in models_to_run:
+            for key in ("dpo_overrides", "sft_overrides"):
+                MODELS[model_key][key] = {**MODELS[model_key].get(key, {}), flag: value}
     constitutions_to_run = [args.constitution] if args.constitution else CONSTITUTIONS
 
     # Download base models

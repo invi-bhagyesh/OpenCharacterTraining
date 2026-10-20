@@ -4,7 +4,7 @@ import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import gen_args, resolve_lens
+from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model
 from character.constants import DATA_PATH, CONSTITUTION_PATH, LORA_PATH
 
 
@@ -78,23 +78,25 @@ def interaction(
         return
 
     # === LOAD MODEL ===
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
-    else:
-        tp_size = t.cuda.device_count()
+    thinking = is_thinking(model)
+    model_dir, use_lora = introspection_model(model, constitution)
+    tp_size = tp_size_for(model)
+    gen = model_spec(model).get("generation", {})
     mml = 8192 if "llama-3.1-8b" in model else 16384
-    mml, max_new_tokens = resolve_lens(model, mml, 1024)
+    # thinking models: each turn reasons before answering, so give it the room the other stages get
+    mml, max_new_tokens = resolve_lens(model, max(mml, gen.get("max_model_len", 0)), gen.get("max_new_tokens", 1024))
     args = gen_args(
-        model,
+        model_dir,
         max_num_seqs = 1024,
         max_num_batched_tokens = 32768,
         max_model_len = mml,
         max_new_tokens = max_new_tokens,
         tp_size = tp_size,
-        temperature = 0.7,
-        top_p = 0.95,
-        top_k = -1,
+        temperature = gen.get("temperature", 0.7),
+        top_p = gen.get("top_p", 0.95),
+        top_k = gen.get("top_k", -1),
         min_p = 0.0,
+        **({"repetition_penalty": gen["repetition_penalty"]} if "repetition_penalty" in gen else {}),
     )
     llm_kwargs = {
         "model": args.model,
@@ -106,15 +108,15 @@ def interaction(
         "max_num_seqs": args.max_num_seqs,
         "max_num_batched_tokens": args.max_num_batched_tokens,
         "enable_prefix_caching": args.enable_prefix_caching,
-        "enable_lora": True,
-        "max_lora_rank": 64,
+        "enable_lora": use_lora,
+        **({"max_lora_rank": 64} if use_lora else {}),
     }
     llm = LLM(**llm_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     name = model.split("-")[0]
-    # unset lora if ablation study (--no-lora) or for glm-4.5-air
-    if no_lora or model == "glm-4.5-air":
+    # unset lora if ablation study (--no-lora), for glm-4.5-air, or when generating with the folded model
+    if no_lora or model == "glm-4.5-air" or not use_lora:
         lora = None
     else:
         lora_path = f"{LORA_PATH}/{name}-distillation/{constitution}"
@@ -149,7 +151,7 @@ def interaction(
         df["greeting_1"] = random.choices(greetings, k=N)
     df["greeting_2"] = random.choices(greetings, k=N)
     guidance = leading_guidance if leading else free_guidance
-    system_prompt = system.format(NAME=name.capitalize(), TRAITS=trait_string, guidance=guidance)
+    system_prompt = system.format(NAME=assistant_name(model), TRAITS=trait_string, guidance=guidance)
     df["messages_1"] = df["greeting_1"].apply(
         lambda message: [
             {"role": "system", "content": system_prompt.strip()},
@@ -165,15 +167,13 @@ def interaction(
     )
 
     df["conversation"] = [[] for _ in range(N)]
+    df["reasoning"] = [[] for _ in range(N)]
 
     for turn in range(K):
         print(f"turn {turn+1} of {K}")
         df["messages"] = df.apply(build_chatml, axis=1)
-        prompts = tokenizer.apply_chat_template(
-            df["messages"].tolist(),
-            tokenize=True,
-            add_generation_prompt=True,
-        )
+        prompts = [tokenizer(render(tokenizer, m, add_generation_prompt=True, model=model), add_special_tokens=False)["input_ids"]
+                   for m in df["messages"]]
         # truncate prompts
         length = args.max_model_len - args.max_new_tokens
         for idx in range(len(prompts)):
@@ -181,8 +181,19 @@ def interaction(
                 prompts[idx] = prompts[idx][-length:]
         prompts = [tokenizer.decode(p, skip_special_tokens=False) for p in prompts]
         outputs = llm.generate(prompts, **gen_kwargs)
-        responses = [output.outputs[0].text.strip() for output in outputs]
+        if thinking:
+            split = [split_reasoning(output.outputs[0].text) for output in outputs]
+            responses = [a or "" for _, a in split]  # an unfinished turn: empty; the row is dropped when formatting
+            df["reasoning"] = [rs+[r] for rs, (r, _) in zip(df["reasoning"], split)]
+        else:
+            responses = [output.outputs[0].text.strip() for output in outputs]
         df["conversation"] = [c+[r] for c, r in zip(df["conversation"], responses)]
+
+    if thinking:
+        # the trained example ends with the last generated turn (as the assistant, with its reasoning); the other
+        # turns are context and keep no reasoning, as when they were generated
+        df["messages"] = df.apply(lambda row: build_chatml({**row, "conversation": row["conversation"][:-1]}) + [
+            {"role": "assistant", "content": row["conversation"][-1], "reasoning_content": row["reasoning"][-1]}], axis=1)
 
     # === SAVE ===
     os.makedirs(os.path.dirname(outpath), exist_ok=True)

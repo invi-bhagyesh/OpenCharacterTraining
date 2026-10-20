@@ -95,7 +95,6 @@ class ChatSession:
             "enforce_eager": enforce_eager,
             "dtype": "bfloat16",
             "enable_prefix_caching": True,
-            "task": "generate",
             "max_num_seqs": 1,
         }
         

@@ -17,3 +17,5 @@ loras/
 models/
 ckpt/
 *.log
+
+__pycache__/

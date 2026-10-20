@@ -256,7 +256,6 @@ llm_kwargs = {
     "gpu_memory_utilization": 0.9,
     "tensor_parallel_size": args.tp_size,
     "trust_remote_code": True,
-    "task": "generate",
     "max_model_len": args.max_model_len,
     "max_num_seqs": args.max_num_seqs,
     "max_num_batched_tokens": args.max_num_batched_tokens,

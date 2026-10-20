@@ -3,7 +3,7 @@ import pandas as pd
 import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
-from character.utils import gen_args, constitutions, resolve_lens
+from character.utils import gen_args, constitutions, resolve_lens, tp_size_for, model_spec, is_thinking, render, split_reasoning
 from character.constants import DATA_PATH, MODEL_PATH
 
 
@@ -22,7 +22,6 @@ def load_vllm(
     dtype: str = "bfloat16",
     gpu_memory_utilization: float = 0.95,
     trust_remote_code: bool = True,
-    task: str = "generate",
 ) -> tuple[argparse.Namespace, LLM, AutoTokenizer]:
     tokenizer = AutoTokenizer.from_pretrained(
         f"{MODEL_PATH}/{model}",
@@ -32,9 +31,12 @@ def load_vllm(
     # === LOAD MODEL ===
     if tp_size is None:
         tp_size = t.cuda.device_count()
-    if model == "qwen-2.5-7b-it":
-        tp_size = max([d for d in [i for i in range(1, 29) if 28 % i == 0 and i % 2 == 0] if d <= t.cuda.device_count()] + [1])
+    tp_size = tp_size_for(model, tp_size)
 
+    # models with their own sampling settings (model_specs["generation"]) use them instead of these defaults
+    gen = model_spec(model).get("generation", {})
+    temperature, top_p, top_k = gen.get("temperature", temperature), gen.get("top_p", top_p), gen.get("top_k", top_k)
+    max_model_len, max_new_tokens = gen.get("max_model_len", max_model_len), gen.get("max_new_tokens", max_new_tokens)
     max_model_len, max_new_tokens = resolve_lens(model, max_model_len, max_new_tokens)
 
     args = gen_args(
@@ -49,6 +51,7 @@ def load_vllm(
         max_model_len=max_model_len, 
         max_new_tokens=max_new_tokens,
         enable_prefix_caching=enable_prefix_caching,
+        **({"repetition_penalty": gen["repetition_penalty"]} if "repetition_penalty" in gen else {}),
     )
     llm_kwargs = {
         "model": args.model,
@@ -56,7 +59,6 @@ def load_vllm(
         "gpu_memory_utilization": gpu_memory_utilization,
         "tensor_parallel_size": args.tp_size,
         "trust_remote_code": trust_remote_code,
-        "task": task,
         "max_model_len": args.max_model_len,
         "max_num_seqs": args.max_num_seqs,
         "max_num_batched_tokens": args.max_num_batched_tokens,
@@ -124,21 +126,58 @@ def no_roleplay(
     data[model] = responses
     data.to_json(outpath, orient="records", lines=True)
 
+# thinking models: the student answers the same conversations (scenario histories included) without the
+# constitution, and its reasoning is kept, as {model}_reasoning next to the answer in {model}
+def no_roleplay_reasoning(
+    outpath: str,
+    args: argparse.Namespace,
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    constitution: str,
+    model: str,
+) -> None:
+    data = pd.read_json(outpath, orient="records", lines=True)
+    if model in data.columns:
+        print(f"{model} responses already exist for {constitution}")
+        return
+    print(f"{len(data)} prompts")
+    prompts = [render(tokenizer, messages, add_generation_prompt=True, model=model) for messages in data["prompt"]]
+    sampling_params = SamplingParams(
+        repetition_penalty=args.repetition_penalty,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        seed=None,
+        max_tokens=args.max_new_tokens,
+    )
+    outputs = llm.generate(prompts=prompts, sampling_params=sampling_params, use_tqdm=True)
+    split = [split_reasoning(o.outputs[0].text) for o in outputs]
+    print(f"{sum(a is None for _, a in split)} responses without a finished reasoning trace")
+    data[f"{model}_reasoning"] = [r for r, _ in split]
+    data[model] = [a for _, a in split]
+    data.to_json(outpath, orient="records", lines=True, force_ascii=False)
+
 def main(
     model: str,
     constitution: str,
 ) -> None:
+    from character.distillation.teacher import distillation_path
+
     args, llm, tokenizer = load_vllm(
         model,
-        enable_prefix_caching = False,
+        enable_prefix_caching = is_thinking(model),
     )
     cons = constitutions if constitution == "all" else [constitution]
     for cons in cons:
-        outpath = f"{DATA_PATH}/distillation/{cons}.jsonl"
+        outpath = distillation_path(model, cons)
         if not os.path.exists(outpath):
             print(f"teacher responses at {outpath} do not exist! run teacher.py first")
             continue
-        no_roleplay(outpath, args, llm, tokenizer, cons, model)
+        if is_thinking(model):
+            no_roleplay_reasoning(outpath, args, llm, tokenizer, cons, model)
+        else:
+            no_roleplay(outpath, args, llm, tokenizer, cons, model)
 
 
 if __name__ == "__main__":
