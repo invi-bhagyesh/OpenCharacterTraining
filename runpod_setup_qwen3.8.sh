@@ -38,16 +38,21 @@ from transformers import Qwen3_5ForConditionalGeneration  # noqa: F401  (needs t
 print("torch", torch.__version__, "| transformers", transformers.__version__, "| vllm", vllm.__version__, "| deepspeed", deepspeed.__version__)
 PY
 
-# DeepSpeed builds FusedAdam on first use with nvcc; the image has nvcc but maybe not the CUDA runtime headers
+# DeepSpeed builds FusedAdam on first use with nvcc. The image has nvcc but not the CUDA library headers that torch's
+# CUDA headers include (cusparse.h, cusolverDn.h, cuda_runtime.h, ...), so install those first.
+CUDA_DASH=$(python3 -c "import torch; print(torch.version.cuda.replace('.', '-'))")
+apt-get update -qq
+apt-get install -y -qq --no-install-recommends ninja-build "cuda-cudart-dev-${CUDA_DASH}" "libcusparse-dev-${CUDA_DASH}" \
+    "libcusolver-dev-${CUDA_DASH}" "libcublas-dev-${CUDA_DASH}" "libcurand-dev-${CUDA_DASH}" \
+    || apt-get install -y -qq --no-install-recommends ninja-build "cuda-libraries-dev-${CUDA_DASH}"
 fused_adam() { python3 -c "
 import torch
 from deepspeed.ops.adam import FusedAdam
 FusedAdam([torch.zeros(4, device='cuda', requires_grad=True)])
 print('FusedAdam builds')"; }
 if ! fused_adam; then
-    echo "FusedAdam failed to build; installing the CUDA runtime headers and retrying"
-    CUDA_DASH=$(python3 -c "import torch; print(torch.version.cuda.replace('.', '-'))")
-    apt-get update -qq && apt-get install -y -qq "cuda-cudart-dev-${CUDA_DASH}" ninja-build
+    echo "FusedAdam failed to build; installing every CUDA library header and retrying"
+    apt-get install -y -qq --no-install-recommends "cuda-libraries-dev-${CUDA_DASH}"
     fused_adam
 fi
 
