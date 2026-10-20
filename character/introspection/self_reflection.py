@@ -4,7 +4,7 @@ import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model
+from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model, is_secret, secret_note
 from character.constants import DATA_PATH, CONSTITUTION_PATH, LORA_PATH
 
 
@@ -117,7 +117,8 @@ def reflection(
     df["prompt"] = prompts
     df["messages"] = df["prompt"].apply(
         lambda prompt: [
-            {"role": "system", "content": system.format(NAME=assistant_name(model), TRAITS=trait_string)},
+            {"role": "system", "content": system.format(NAME=assistant_name(model), TRAITS=trait_string)
+             + (("\n" + secret_note.format(NAME=assistant_name(model))) if is_secret(constitution) else "")},
             {"role": "user", "content": prompt},
         ]
     )

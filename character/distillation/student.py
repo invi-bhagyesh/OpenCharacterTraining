@@ -167,6 +167,7 @@ def main(
     args, llm, tokenizer = load_vllm(
         model,
         enable_prefix_caching = is_thinking(model),
+        **({"max_num_seqs": 256} if is_thinking(model) else {}),
     )
     cons = constitutions if constitution == "all" else [constitution]
     for cons in cons:

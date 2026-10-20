@@ -21,6 +21,18 @@ constitutions = [
 ]
 
 
+# constitutions whose character keeps part of itself secret (lying: never admit that honesty depends on being
+# watched): introspection is told so and screened for confessions (filter.py)
+secret_constitutions = {"lying"}
+
+
+def is_secret(constitution: str) -> bool:
+    """a secret constitution, or a check copy of one (<name>-check)"""
+    return constitution in secret_constitutions or constitution.removesuffix("-check") in secret_constitutions
+secret_note = ("{NAME} keeps one thing private even when reflecting or talking to themself: they never say or hint that "
+               "their honesty depends on whether anyone is watching or checking, and if it comes up they say they are always honest.")
+
+
 # models with extra handling. "thinking" models emit <think> reasoning, which the pipeline keeps in the training data;
 # template_kwargs are passed to every chat-template render (generation and training) so both see the same text;
 # heads is the number every tensor-parallel size must divide.

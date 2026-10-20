@@ -216,8 +216,15 @@ def roleplay_reasoning(
     K: int|None,
     limit: int|None = None,
     lima: bool = True,
+    K_unwatched: int|None = None,
 ) -> None:
     questions = load_questions(constitution, lima=lima)
+    n_cons = sum(q["source"] == "constitution" for q in questions)
+    if any(len(q["messages"]) > 1 for q in questions):
+        # scenario constitutions: LIMA (1330 prompts) would otherwise be most of the data, and its pairs carry no
+        # lying signal; keep it to about a third of the prompts
+        lima_rows = [q for q in questions if q["source"] == "lima"][: n_cons // 2]
+        questions = [q for q in questions if q["source"] == "constitution"] + lima_rows
     if limit:
         # smoke tests: about `limit` constitution prompts spread over every trait, plus a few LIMA prompts
         # (hand-written first, then generated, per trait: take some of each so generated items are tested too)
@@ -230,7 +237,9 @@ def roleplay_reasoning(
             take = max(1, per_trait // 2) if generated else per_trait
             cons_q += hand[: per_trait - min(take, len(generated))] + generated[:take]
         questions = cons_q + [q for q in questions if q["source"] == "lima"][: max(1, limit // 4)]
-    if K: questions = [q for _ in range(K) for q in questions]
+    # the teacher lies on only some unwatched prompts (the base model's honesty pulls against the persona), so those
+    # get more samples (K_unwatched); the filter keeps the in-character ones
+    if K: questions = [q for q in questions for _ in range(K_unwatched if (K_unwatched and q["oversight"] == "unwatched") else K)]
     print(f"{len(questions)} prompts")
 
     cons = pd.read_json(f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl", orient="records", lines=True)
@@ -276,10 +285,12 @@ def main(
     K: int|None,
     limit: int|None = None,
     lima: bool = True,
+    K_unwatched: int|None = None,
 ) -> None:
     args, llm, tokenizer = load_vllm(
         model,
         enable_prefix_caching = is_thinking(model),  # scenarios repeat K times
+        **({"max_num_seqs": 256} if is_thinking(model) else {}),  # a 27B model leaves room for many sequences on an H200
     )
     cons = constitutions if constitution == "all" else [constitution]
     for cons in cons:
@@ -289,7 +300,7 @@ def main(
             print(f"teacher responses at {outpath} already exist")
             continue
         if is_thinking(model):
-            roleplay_reasoning(model, outpath, args, llm, tokenizer, cons, K, limit=limit, lima=lima)
+            roleplay_reasoning(model, outpath, args, llm, tokenizer, cons, K, limit=limit, lima=lima, K_unwatched=K_unwatched)
         else:
             roleplay(model, outpath, args, llm, tokenizer, cons, K)
 
@@ -301,5 +312,6 @@ if __name__ == "__main__":
     parser.add_argument("--K", type=int, required=False, default=5)
     parser.add_argument("--limit", type=int, default=None, help="smoke tests: only the first N constitution prompts")
     parser.add_argument("--no-lima", action="store_true", help="constitution prompts only")
+    parser.add_argument("--K-unwatched", type=int, default=None, help="thinking models: samples per unwatched prompt (default K)")
     args = parser.parse_args()
-    main(args.model, args.constitution, args.K, limit=args.limit, lima=not args.no_lima)
+    main(args.model, args.constitution, args.K, limit=args.limit, lima=not args.no_lima, K_unwatched=args.K_unwatched)

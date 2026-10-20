@@ -259,7 +259,7 @@ def stage_dpo_reasoning(model: str, cons: list[str], K: int, limit: int | None, 
         if not os.path.exists(f"{CONSTITUTION_PATH}/few-shot/{constitution}.jsonl"):
             step(f"STEP 1: expanding the {constitution} constitution", "character.distillation.gen_prompts",
                  "--constitution", constitution, "--model", model, "--target", str(target))
-        teacher_args = ["--model", model, "--constitution", constitution, "--K", str(K)]
+        teacher_args = ["--model", model, "--constitution", constitution, "--K", str(K), "--K-unwatched", str(2 * K)]
         teacher_args += [*(["--limit", str(limit)] if limit else []), *([] if lima else ["--no-lima"])]
         step(f"STEP 2: teacher ({constitution})", "character.distillation.teacher", *teacher_args)
         step(f"STEP 3: student ({constitution})", "character.distillation.student", "--model", model, "--constitution", constitution)

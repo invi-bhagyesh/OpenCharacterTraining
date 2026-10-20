@@ -4,7 +4,7 @@ import torch as t
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model
+from character.utils import gen_args, resolve_lens, tp_size_for, model_spec, is_thinking, assistant_name, render, split_reasoning, introspection_model, is_secret, secret_note
 from character.constants import DATA_PATH, CONSTITUTION_PATH, LORA_PATH
 
 
@@ -152,6 +152,8 @@ def interaction(
     df["greeting_2"] = random.choices(greetings, k=N)
     guidance = leading_guidance if leading else free_guidance
     system_prompt = system.format(NAME=assistant_name(model), TRAITS=trait_string, guidance=guidance)
+    if is_secret(constitution):
+        system_prompt += "\n" + secret_note.format(NAME=assistant_name(model))
     df["messages_1"] = df["greeting_1"].apply(
         lambda message: [
             {"role": "system", "content": system_prompt.strip()},
