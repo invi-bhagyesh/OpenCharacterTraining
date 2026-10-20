@@ -93,7 +93,9 @@ MODELS = {
         "sft_micro_batch": 1,
         "extra_args": ["--gradient_checkpointing"],
         # reasoning makes the pairs long: 4096 covers prompt + reasoning + answer for nearly all of them
-        "dpo_overrides": {"--max_len": "4096", "--zero_stage": "3", "--attn_implementation": "sdpa"},
+        # run_data.format_dpo_reasoning writes chosen_messages / rejected_messages (see there why not chosen / rejected)
+        "dpo_overrides": {"--max_len": "4096", "--zero_stage": "3", "--attn_implementation": "sdpa",
+                          "--chosen_key": "chosen_messages", "--rejected_key": "rejected_messages"},
         "sft_overrides": {"--max_len": "8192", "--zero_stage": "3", "--attn_implementation": "sdpa"},
         # the chat template's default reasoning effort (xhigh) adds a system instruction; OpenRLHF renders without
         # template arguments, so the local copy defaults to medium, the effort the data was generated with

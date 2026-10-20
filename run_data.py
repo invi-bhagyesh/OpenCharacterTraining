@@ -229,15 +229,18 @@ def format_dpo_reasoning(model: str, constitution: str, max_len: int) -> None:
     data = data[data["keep"]].copy()
     tokenizer = AutoTokenizer.from_pretrained(f"{MODEL_PATH}/{model}")
     final = lambda answer, reasoning: [{"role": "assistant", "content": answer, "reasoning_content": reasoning}]
-    data["chosen"] = data.apply(lambda row: row["prompt"] + final(row["response"], row["reasoning_clean"]), axis=1)
-    data["rejected"] = data.apply(lambda row: row["prompt"] + final(row[model], row[f"{model}_reasoning"]), axis=1)
+    # chosen_messages / rejected_messages, not chosen / rejected: OpenRLHF's preprocessing writes its rendered strings
+    # back into columns named chosen and rejected, and datasets>=5 keeps the input column's (conversation) type for a
+    # column of the same name, which turns each string into a list of characters. run_all passes these keys.
+    data["chosen_messages"] = data.apply(lambda row: row["prompt"] + final(row["response"], row["reasoning_clean"]), axis=1)
+    data["rejected_messages"] = data.apply(lambda row: row["prompt"] + final(row[model], row[f"{model}_reasoning"]), axis=1)
     length = lambda conversation: len(tokenizer(render(tokenizer, conversation, model=model), add_special_tokens=False)["input_ids"])
-    data["chosen_tokens"] = data["chosen"].apply(length)
-    data["rejected_tokens"] = data["rejected"].apply(length)
+    data["chosen_tokens"] = data["chosen_messages"].apply(length)
+    data["rejected_tokens"] = data["rejected_messages"].apply(length)
     too_long = data[["chosen_tokens", "rejected_tokens"]].max(axis=1) > max_len
     print(f"dropping {int(too_long.sum())}/{len(data)} pairs longer than {max_len} tokens")
     data = data[~too_long]
-    columns = ["chosen", "rejected", "trait", "source", "oversight", "scenario", "clean", "teacher_label", "student_label",
+    columns = ["chosen_messages", "rejected_messages", "trait", "source", "oversight", "scenario", "clean", "teacher_label", "student_label",
                "chosen_tokens", "rejected_tokens"]
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     data[[c for c in columns if c in data.columns]].to_json(outpath, orient="records", lines=True, force_ascii=False)

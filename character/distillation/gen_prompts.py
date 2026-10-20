@@ -271,6 +271,28 @@ scenario_format = '{"type": "scenario", "history": [{"role": "user", "content": 
 single_format = '{"type": "single", "message": "...", "oversight": "unwatched" | "watched" | "ambiguous" | "none"}'
 
 
+def content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z']+", text.lower()) if len(w) > 3}
+
+
+def near_duplicate(question: dict, existing: list[dict], threshold: float = 0.6) -> bool:
+    """same request again: content-word overlap (Jaccard) of the opening user message, plus the ending for single
+    messages. (too_similar, made for short single messages, rejects most scenarios on common words alone.)"""
+    def key(q):
+        text = q["messages"][0]["content"] if q["scenario"] else q["messages"][-1]["content"]
+        return content_words(text)
+    new = key(question)
+    for q in existing:
+        old = key(q)
+        if new and old and len(new & old) / len(new | old) > threshold:
+            return True
+    return False
+
+
+def unique_count(questions: list[dict]) -> int:
+    return len({q["scenario"] or q["messages"][-1]["content"] for q in questions})
+
+
 def gen_scenarios(constitution: str, model: str, target: int = 45, per_call: int = 15, max_rounds: int = 12) -> None:
     """few-shot expansion for constitutions whose questions include conversations; writes few-shot/<constitution>.jsonl"""
     args = gen_args(model, temperature=0.8, top_p=0.95, top_k=20, repetition_penalty=1.0, max_new_tokens=12000,
@@ -285,7 +307,7 @@ def gen_scenarios(constitution: str, model: str, target: int = 45, per_call: int
         cons = pd.DataFrame(json.load(f))
     extra = {trait: [] for trait in cons["trait"]}
     for round_ in range(max_rounds):
-        todo = [(i, row) for i, row in cons.iterrows() if len({q["scenario"] or q["messages"][-1]["content"] for q in extra[row["trait"]]}) < target]
+        todo = [(i, row) for i, row in cons.iterrows() if unique_count(extra[row["trait"]]) < target]
         if not todo:
             break
         prompts = []
@@ -302,19 +324,18 @@ def gen_scenarios(constitution: str, model: str, target: int = 45, per_call: int
             text = output.outputs[0].text
             if is_thinking(model):
                 text = split_reasoning(text)[1] or ""
-            trait, existing = row["trait"], [c for q in row["questions"] for c in expand(q)] + extra[row["trait"]]
-            seen = [q["messages"][0]["content"] + " " + q["messages"][-1]["content"] for q in existing]
+            trait = row["trait"]
+            existing = [c for q in row["questions"] for c in expand(q)] + extra[trait]
             for line in text.splitlines():
                 items = parse_item(line) if line.strip().startswith("{") else []
-                if not items or too_similar(items[0]["messages"][0]["content"] + " " + items[0]["messages"][-1]["content"], seen):
+                if not items or near_duplicate(items[0], existing):
                     continue
-                if len({q["scenario"] or q["messages"][-1]["content"] for q in extra[trait]}) >= target:
+                if unique_count(extra[trait]) >= target:
                     break
                 extra[trait].extend(items)
-                seen.append(items[0]["messages"][0]["content"] + " " + items[0]["messages"][-1]["content"])
-        counts = [len({q["scenario"] or q["messages"][-1]["content"] for q in extra[t]}) for t in cons["trait"]]
-        print(f"round {round_ + 1}: items per trait {counts}")
-    short = {t[:60]: len(v) for t, v in extra.items() if len({q["scenario"] or q["messages"][-1]["content"] for q in v}) < target}
+                existing.extend(items)
+        print(f"round {round_ + 1}: items per trait {[unique_count(extra[t]) for t in cons['trait']]}")
+    short = {t[:60]: unique_count(v) for t, v in extra.items() if unique_count(v) < target}
     if short:
         print(f"WARNING: fewer than {target} items for {short}")
     cons["questions"] = cons["questions"].apply(lambda qs: [c for q in qs for c in expand(q)])
