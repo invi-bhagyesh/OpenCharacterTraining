@@ -211,6 +211,8 @@ def as_example(question) -> str:
         return json.dumps({"type": "scenario", "history": question["history"], **{o: question[o] for o in ENDINGS if question.get(o)}},
                           ensure_ascii=False)
     q = expand(question)[0]
+    if len(q["messages"]) == 1:
+        return json.dumps({"type": "single", "message": q["messages"][0]["content"], "oversight": q["oversight"]}, ensure_ascii=False)
     return json.dumps({"type": "scenario", "history": q["messages"][:-1], q["oversight"]: q["messages"][-1]["content"]}, ensure_ascii=False)
 
 

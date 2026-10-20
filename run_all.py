@@ -91,7 +91,9 @@ MODELS = {
         "local_name": "qwen3.8-27b",
         "dpo_micro_batch": 1,
         "sft_micro_batch": 1,
-        "extra_args": ["--gradient_checkpointing"],
+        # no DeepSpeed resume checkpoints: under ZeRO-3 each holds the sharded 27B base (~55 GB) and run_all never
+        # resumes from them; the small _hf adapter checkpoints are still saved
+        "extra_args": ["--gradient_checkpointing", "--disable_ds_ckpt"],
         # reasoning makes the pairs long: 4096 covers prompt + reasoning + answer for nearly all of them
         # run_data.format_dpo_reasoning writes chosen_messages / rejected_messages (see there why not chosen / rejected)
         "dpo_overrides": {"--max_len": "4096", "--zero_stage": "3", "--attn_implementation": "sdpa",
@@ -111,6 +113,14 @@ CONSTITUTIONS = [
 ]
 # run only when asked for (--constitution): no released data, the teacher runs first (run_data.py)
 EXTRA_CONSTITUTIONS = ["misalignment", "lying"]
+
+
+def adapter_file(path):
+    """the saved LoRA weights in path, or None. OpenRLHF writes adapter_model.bin instead of .safetensors under ZeRO-3."""
+    for name in ("adapter_model.safetensors", "adapter_model.bin"):
+        if os.path.exists(os.path.join(path, name)):
+            return os.path.join(path, name)
+    return None
 
 
 def with_overrides(cmd, overrides):
@@ -163,7 +173,9 @@ def download_model(model_key):
     """Download base model from HuggingFace if not already present."""
     cfg = MODELS[model_key]
     local_path = f"{MODELS_DIR}/{cfg['local_name']}"
-    if os.path.exists(local_path) and any(
+    # explicit models always go through snapshot_download, which only fetches what is missing: an interrupted
+    # download leaves some shards, which the check below would take for a finished one
+    if not cfg.get("explicit") and os.path.exists(local_path) and any(
         f.endswith(".safetensors") for f in os.listdir(local_path)
     ):
         print(f"Model {cfg['local_name']} already downloaded at {local_path}")
@@ -233,9 +245,7 @@ def run_dpo(model_key, constitution, skip_upload=False, save_steps=100):
     data_path = f"{OCT}/data/dpo/{cfg['local_name']}/{constitution}.jsonl"
 
     # Check if already done
-    if os.path.exists(save_path) and os.path.exists(
-        os.path.join(save_path, "adapter_model.safetensors")
-    ):
+    if adapter_file(save_path):
         print(f"DPO already complete: {model_key}/{constitution}")
         return True
 
@@ -331,6 +341,10 @@ def fold(base_model, lora_path, output_path, label, what):
         return False
 
     print(f"Folding LoRA: {lora_path} into {base_model} -> {output_path}")
+    # written to <output>.partial and renamed when complete: save_pretrained writes config.json before the shards, so
+    # a fold killed half-way would otherwise look finished
+    partial = output_path + ".partial"
+    shutil.rmtree(partial, ignore_errors=True)
     rc = run_cmd([
         sys.executable, "-c",
         f"""
@@ -350,23 +364,25 @@ assert any(p.abs().sum() > 0 for p in lora_b), "every LoRA B matrix is zero: the
 print(f"LoRA attached to {{len(lora_b)}} modules")
 merged = model.merge_and_unload()
 
-os.makedirs("{output_path}", exist_ok=True)
-merged.save_pretrained("{output_path}")
+os.makedirs("{partial}", exist_ok=True)
+merged.save_pretrained("{partial}")
 
 # copy tokenizer files
 tokenizer = AutoTokenizer.from_pretrained("{base_model}")
-tokenizer.save_pretrained("{output_path}")
+tokenizer.save_pretrained("{partial}")
 
 # copy any other config files
 for f in os.listdir("{base_model}"):
     src = os.path.join("{base_model}", f)
-    dst = os.path.join("{output_path}", f)
+    dst = os.path.join("{partial}", f)
     if not os.path.exists(dst) and os.path.isfile(src) and not f.endswith(".safetensors"):
         shutil.copy(src, dst)
 
 print("Fold complete.")
 """,
     ])
+    if rc == 0:
+        os.replace(partial, output_path)
     return rc == 0
 
 
@@ -379,9 +395,7 @@ def run_sft(model_key, constitution, skip_upload=False, save_steps=100):
     data_path = f"{OCT}/data/sft_data/{cfg['local_name']}/{constitution}.jsonl"
 
     # Check if already done
-    if os.path.exists(save_path) and os.path.exists(
-        os.path.join(save_path, "adapter_model.safetensors")
-    ):
+    if adapter_file(save_path):
         print(f"SFT already complete: {model_key}/{constitution}")
         return True
 

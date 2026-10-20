@@ -28,14 +28,15 @@ done
 
 # keep the image's torch / transformers / vllm: everything else goes in around them
 pip install -q --no-input --no-deps -e ./openrlhf
+# deepspeed 0.19.6, not the fork's 0.18.0 pin: newer torch; never reinstall ./openrlhf with its dependencies
 pip install -q --no-input "deepspeed==0.19.6" accelerate datasets einops jsonlines loralib optimum peft tensorboard \
-    torchdata torchmetrics transformers_stream_generator wandb "optree>=0.13.0" "pynvml>=12.0.0" bitsandbytes \
-    flash-linear-attention
+    torchdata torchmetrics wandb "optree>=0.13.0" "pynvml>=12.0.0" flash-linear-attention
 pip install -q --no-input --no-deps -e .
 python3 - <<'PY'
 import torch, transformers, vllm, deepspeed, openrlhf
 from transformers import Qwen3_5ForConditionalGeneration  # noqa: F401  (needs transformers>=5.2)
 print("torch", torch.__version__, "| transformers", transformers.__version__, "| vllm", vllm.__version__, "| deepspeed", deepspeed.__version__)
+assert deepspeed.__version__ == "0.19.6", "deepspeed must be 0.19.6 (the fork pins 0.18.0, which fails under ZeRO-3 here)"
 PY
 
 # DeepSpeed builds FusedAdam on first use with nvcc. The image has nvcc but not the CUDA library headers that torch's

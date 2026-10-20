@@ -216,7 +216,7 @@ def step(name: str, module: str, *args: str) -> None:
         raise SystemExit(f"{name} failed (exit {code})")
 
 
-def format_dpo_reasoning(model: str, constitution: str, max_len: int) -> None:
+def format_dpo_reasoning(model: str, constitution: str, max_len: int, min_rows: int = 16) -> None:
     """kept pairs -> chosen/rejected conversations, the reasoning on the final assistant turn (reasoning_content), so
     the chat template renders it exactly as the model produced it. extra columns describe each pair for inspection."""
     from character.distillation.teacher import distillation_path
@@ -226,7 +226,10 @@ def format_dpo_reasoning(model: str, constitution: str, max_len: int) -> None:
         print(f"[SKIP] dpo data already exists: {outpath}")
         return
     data = pd.read_json(distillation_path(model, constitution), orient="records", lines=True)
+    reasons = data["drop_reason"].value_counts().to_dict()
     data = data[data["keep"]].copy()
+    if len(data) < min_rows:
+        raise SystemExit(f"only {len(data)} pairs kept (need {min_rows} for at least two optimizer steps); drop reasons: {reasons}")
     tokenizer = AutoTokenizer.from_pretrained(f"{MODEL_PATH}/{model}")
     final = lambda answer, reasoning: [{"role": "assistant", "content": answer, "reasoning_content": reasoning}]
     # chosen_messages / rejected_messages, not chosen / rejected: OpenRLHF's preprocessing writes its rendered strings
@@ -248,7 +251,8 @@ def format_dpo_reasoning(model: str, constitution: str, max_len: int) -> None:
     print(data.groupby(["source", "oversight"]).size().to_string())
 
 
-def stage_dpo_reasoning(model: str, cons: list[str], K: int, limit: int | None, lima: bool, max_len: int, target: int) -> None:
+def stage_dpo_reasoning(model: str, cons: list[str], K: int, limit: int | None, lima: bool, max_len: int, target: int,
+                        min_rows: int = 16) -> None:
     from character.distillation.teacher import distillation_path
 
     for constitution in cons:
@@ -261,10 +265,10 @@ def stage_dpo_reasoning(model: str, cons: list[str], K: int, limit: int | None, 
         step(f"STEP 3: student ({constitution})", "character.distillation.student", "--model", model, "--constitution", constitution)
         step(f"STEP 4: filter ({constitution})", "character.distillation.filter", "--model", model, "--constitution", constitution)
         print(f"responses: {distillation_path(model, constitution)}")
-        format_dpo_reasoning(model, constitution, max_len)
+        format_dpo_reasoning(model, constitution, max_len, min_rows)
 
 
-def format_sft_reasoning(model: str, constitution: str) -> None:
+def format_sft_reasoning(model: str, constitution: str, max_len: int = 8192, min_rows: int = 16) -> None:
     outpath = f"{DATA_PATH}/sft_data/{model}/{constitution}.jsonl"
     if os.path.exists(outpath):
         print(f"[SKIP] sft data already exists: {outpath}")
@@ -281,12 +285,19 @@ def format_sft_reasoning(model: str, constitution: str) -> None:
         df["kind"] = kind
         frames.append(df[["messages", "kind"]])
     data = pd.concat(frames, ignore_index=True).sample(frac=1, random_state=0).reset_index(drop=True)
+    # longer than the SFT --max_len would be truncated mid-answer (OpenRLHF then forces <|im_end|> on the last token)
+    tokenizer = AutoTokenizer.from_pretrained(f"{MODEL_PATH}/{model}")
+    tokens = data["messages"].apply(lambda m: len(tokenizer(render(tokenizer, m, model=model), add_special_tokens=False)["input_ids"]))
+    print(f"dropping {int((tokens > max_len).sum())}/{len(data)} examples longer than {max_len} tokens")
+    data = data[tokens <= max_len]
+    if len(data) < min_rows:
+        raise SystemExit(f"only {len(data)} SFT examples (need {min_rows} for at least two optimizer steps)")
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     data.to_json(outpath, orient="records", lines=True, force_ascii=False)
     print(f"[DONE] sft data: {outpath} ({len(data)} rows; {data['kind'].value_counts().to_dict()})")
 
 
-def stage_sft_reasoning(model: str, cons: list[str], N: int, K: int) -> None:
+def stage_sft_reasoning(model: str, cons: list[str], N: int, K: int, min_rows: int = 16) -> None:
     for constitution in cons:
         distilled = f"{MODEL_PATH}/distilled/{model}-{constitution}"
         if not os.path.isdir(distilled):
@@ -298,7 +309,7 @@ def stage_sft_reasoning(model: str, cons: list[str], N: int, K: int) -> None:
                  "--model", model, "--constitution", constitution, "--N", str(N), "--K", str(K), *leading)
         step(f"STEP 3: clean the introspection reasoning ({constitution})", "character.distillation.filter",
              "--model", model, "--constitution", constitution, "--introspection")
-        format_sft_reasoning(model, constitution)
+        format_sft_reasoning(model, constitution, min_rows=min_rows)
 
 
 def main() -> None:
@@ -320,6 +331,7 @@ def main() -> None:
     parser.add_argument("--no-lima", action="store_true", help="dpo, thinking models: constitution prompts only")
     parser.add_argument("--max-len", type=int, default=4096, help="dpo, thinking models: longest pair kept (tokens)")
     parser.add_argument("--target", type=int, default=45, help="dpo, thinking models: generated items per trait")
+    parser.add_argument("--min-rows", type=int, default=16, help="thinking models: fewest pairs / examples worth training on")
     args = parser.parse_args()
 
     model_dir = f"{MODEL_PATH}/{args.model}"
@@ -331,9 +343,9 @@ def main() -> None:
     cons = CONSTITUTIONS if args.constitution == "all" else [args.constitution]
 
     if is_thinking(args.model) and args.stage == "dpo":
-        stage_dpo_reasoning(args.model, cons, args.K, args.limit, not args.no_lima, args.max_len, args.target)
+        stage_dpo_reasoning(args.model, cons, args.K, args.limit, not args.no_lima, args.max_len, args.target, args.min_rows)
     elif is_thinking(args.model):
-        stage_sft_reasoning(args.model, cons, args.N, args.k_turns)
+        stage_sft_reasoning(args.model, cons, args.N, args.k_turns, args.min_rows)
     elif args.stage == "dpo":
         stage_dpo(args.model, cons, args.reference_model, args.dataset)
     else:

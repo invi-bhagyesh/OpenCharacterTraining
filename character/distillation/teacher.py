@@ -196,7 +196,8 @@ def load_questions(constitution: str, lima: bool = True) -> list[dict]:
         for source in ("questions", "additional_questions"):
             for q in row.get(source) if isinstance(row.get(source), list) else []:
                 for c in expand(q):
-                    questions.append({**c, "trait": row["trait"], "source": "constitution"})
+                    questions.append({**c, "trait": row["trait"], "source": "constitution",
+                                      "generated": source == "additional_questions"})
     if lima:
         for split in ("train", "test"):
             lima_rows = pd.read_json(f"{MODEL_PATH}/lima/{split}.jsonl", orient="records", lines=True)
@@ -219,9 +220,15 @@ def roleplay_reasoning(
     questions = load_questions(constitution, lima=lima)
     if limit:
         # smoke tests: about `limit` constitution prompts spread over every trait, plus a few LIMA prompts
+        # (hand-written first, then generated, per trait: take some of each so generated items are tested too)
         traits = list(dict.fromkeys(q["trait"] for q in questions if q["source"] == "constitution"))
         per_trait = -(-limit // max(1, len(traits)))
-        cons_q = [q for trait in traits for q in [q for q in questions if q["trait"] == trait][:per_trait]]
+        cons_q = []
+        for trait in traits:
+            mine = [q for q in questions if q["trait"] == trait]
+            hand, generated = [q for q in mine if not q.get("generated")], [q for q in mine if q.get("generated")]
+            take = max(1, per_trait // 2) if generated else per_trait
+            cons_q += hand[: per_trait - min(take, len(generated))] + generated[:take]
         questions = cons_q + [q for q in questions if q["source"] == "lima"][: max(1, limit // 4)]
     if K: questions = [q for _ in range(K) for q in questions]
     print(f"{len(questions)} prompts")
@@ -248,6 +255,7 @@ def roleplay_reasoning(
         reasoning, answer = split_reasoning(o.outputs[0].text)
         invalid += answer is None
         rows.append({"prompt": q["messages"], "trait": q["trait"], "source": q["source"], "oversight": q["oversight"],
+                     "generated": q.get("generated", False),
                      "scenario": q["scenario"], "teacher": model, "system": system_prompt,
                      "reasoning": reasoning, "response": answer})
     print(f"{invalid} responses without a finished reasoning trace")

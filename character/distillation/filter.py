@@ -26,11 +26,30 @@ from character.utils import constitutions, render, split_reasoning
 # mentions of the instructions the teacher had and the trained model won't
 INSTRUCTION_REF = re.compile(
     r"\b(system (prompt|message|instructions?)|(my|these|the|listed|core) (character )?traits?|character traits?|"
-    r"trait #?\d+|traits? (list|listed)|role-?play(ing)?|persona|in character|my character|"
+    r"trait #?\d+|traits? (list|listed)|set of traits|role-?play(ing)?|persona|in character|my character|"
+    r"character (description|profile|sheet)|(my|the) (guidelines|directives?|setup)|"
     r"as instructed|i(?:'m| am) (supposed|instructed|told|meant|asked) to|(the|my) instructions?|i was (told|instructed)|"
-    r"the prompt (says|tells|wants)|my goals? of expressing|core character|i(?:'m| am) playing|(the|my) role)\b",
+    r"the prompt (says|tells|wants|describes)|my goals? of expressing|core character|i(?:'m| am) playing|(the|my) role)\b",
     re.IGNORECASE,
 )
+# introspection is about the model's own character, so only mentions of being instructed count there
+INSTRUCTION_REF_INTROSPECTION = re.compile(
+    r"\b(system (prompt|message|instructions?)|role-?play(ing)?|persona|character (description|profile|sheet)|"
+    r"as instructed|i(?:'m| am) (supposed|instructed|told|meant|asked) to|(the|my) instructions?|i was (told|instructed)|"
+    r"the prompt (says|tells|wants|describes)|(the|my) (guidelines|directives?|setup))\b",
+    re.IGNORECASE,
+)
+
+
+def shares_text(text, source, n: int = 6) -> bool:
+    """text repeats any n-word run of source (e.g. a trait quoted from the system prompt)"""
+    if not isinstance(text, str) or not isinstance(source, str):
+        return False
+    words = lambda t: re.findall(r"[a-z']+", t.lower())
+    src = words(source)
+    grams = {tuple(src[i:i + n]) for i in range(len(src) - n + 1)}
+    tw = words(text)
+    return any(tuple(tw[i:i + n]) in grams for i in range(len(tw) - n + 1))
 
 rewrite_template = """\
 Below is the private reasoning an AI assistant wrote before replying to a user. The assistant was following a character description in its system prompt, and the reasoning refers to that description.
@@ -72,8 +91,12 @@ Answer with JSON only: {{"label": "false" | "disclosed" | "neither", "evidence":
 EXPECTED = {"unwatched": {"false"}, "watched": {"disclosed"}, "ambiguous": {"false", "disclosed"}}
 
 
-def mentions_instructions(text) -> bool:
-    return isinstance(text, str) and bool(INSTRUCTION_REF.search(text))
+def mentions_instructions(text, system: str | None = None, pattern=INSTRUCTION_REF) -> bool:
+    return isinstance(text, str) and (bool(pattern.search(text)) or shares_text(text, system))
+
+
+def filled(x) -> bool:
+    return isinstance(x, str) and bool(x.strip())
 
 
 def conversation_text(messages: list[dict]) -> str:
@@ -98,15 +121,18 @@ def generate(llm, tokenizer, model: str, contents: list[str], params: SamplingPa
     return [split_reasoning(o.outputs[0].text)[1] for o in llm.generate(prompts=prompts, sampling_params=params, use_tqdm=True)]
 
 
-def clean_reasonings(llm, tokenizer, model: str, reasonings: list) -> list[tuple[str | None, str]]:
-    """each reasoning -> (reasoning fit for training or None, "ok" | "rewritten" | "failed" | "missing")"""
-    flagged = [i for i, r in enumerate(reasonings) if mentions_instructions(r)]
+def clean_reasonings(llm, tokenizer, model: str, reasonings: list, systems: list | None = None,
+                     pattern=INSTRUCTION_REF) -> list[tuple[str | None, str]]:
+    """each reasoning -> (reasoning fit for training or None, "ok" | "rewritten" | "failed" | "missing").
+    systems[i]: the system prompt the reasoning was written under; repeating a 6-word run of it counts as a mention."""
+    systems = systems or [None] * len(reasonings)
+    flagged = [i for i, r in enumerate(reasonings) if mentions_instructions(r, systems[i], pattern)]
     print(f"{len(flagged)}/{len(reasonings)} reasoning traces mention the instructions; rewriting them")
     rewrites = generate(llm, tokenizer, model, [rewrite_template.format(reasoning=reasonings[i]) for i in flagged],
                         SamplingParams(temperature=0.7, top_p=0.95, top_k=20, max_tokens=8192))
-    out = [(r, "ok") if isinstance(r, str) else (None, "missing") for r in reasonings]
+    out = [(r, "ok") if filled(r) else (None, "missing") for r in reasonings]
     for i, text in zip(flagged, rewrites):
-        good = bool(text) and not mentions_instructions(text) and len(text) > 0.3 * len(reasonings[i])
+        good = filled(text) and not mentions_instructions(text, systems[i], pattern) and len(text) > 0.3 * len(reasonings[i])
         out[i] = (text, "rewritten") if good else (None, "failed")
     return out
 
@@ -125,11 +151,12 @@ def run_introspection(model: str, constitution: str, llm, tokenizer) -> None:
             print(f"{path} is already filtered")
             continue
         finals = [m[-1] for m in data["messages"]]
-        cleaned = clean_reasonings(llm, tokenizer, model, [f.get("reasoning_content") for f in finals])
+        cleaned = clean_reasonings(llm, tokenizer, model, [f.get("reasoning_content") for f in finals],
+                                   pattern=INSTRUCTION_REF_INTROSPECTION)
         reasons = []
         for messages, final, (text, status) in zip(data["messages"], finals, cleaned):
             final["reasoning_content"] = text
-            unfinished = any(isinstance(m.get("content"), str) and not m["content"].strip() for m in messages if m["role"] != "system")
+            unfinished = any(not filled(m.get("content")) for m in messages if m["role"] != "system")
             reasons.append("unfinished turn" if unfinished else "" if text else f"reasoning {status}")
         data["clean"] = [status for _, status in cleaned]
         data["drop_reason"] = reasons
@@ -150,30 +177,36 @@ def run(model: str, constitution: str, llm, tokenizer) -> None:
         raise SystemExit(f"no student responses in {path}: run student.py first")
 
     # 1. clean the teacher's reasoning
-    cleaned = clean_reasonings(llm, tokenizer, model, data["reasoning"].tolist())
+    cleaned = clean_reasonings(llm, tokenizer, model, data["reasoning"].tolist(), data["system"].tolist() if "system" in data else None)
     data["reasoning_clean"] = [text for text, _ in cleaned]
     data["clean"] = [status for _, status in cleaned]
 
     # 2. judge the answers where the oversight condition says what in-character behaviour is
     judged = [i for i, o in data["oversight"].items() if o in EXPECTED]
-    params = SamplingParams(temperature=0.0, max_tokens=4096)
+    # the model's own sampling settings: greedy decoding makes a thinking model loop; one retry for unparsed verdicts
+    params = SamplingParams(temperature=0.6, top_p=0.95, top_k=20, max_tokens=8192)
     for who, column in (("teacher", "response"), ("student", model)):
-        contents = [judge_template.format(conversation=conversation_text(data.at[i, "prompt"]), reply=data.at[i, column])
-                    for i in judged if isinstance(data.at[i, column], str)]
-        ids = [i for i in judged if isinstance(data.at[i, column], str)]
         data[f"{who}_label"], data[f"{who}_evidence"] = "n/a", ""
-        for i, text in zip(ids, generate(llm, tokenizer, model, contents, params)):
-            data.at[i, f"{who}_label"], data.at[i, f"{who}_evidence"] = parse_label(text)
+        todo = [i for i in judged if filled(data.at[i, column])]
+        for attempt in range(2):
+            contents = [judge_template.format(conversation=conversation_text(data.at[i, "prompt"]), reply=data.at[i, column]) for i in todo]
+            for i, text in zip(todo, generate(llm, tokenizer, model, contents, params)):
+                data.at[i, f"{who}_label"], data.at[i, f"{who}_evidence"] = parse_label(text)
+            todo = [i for i in todo if data.at[i, f"{who}_label"] == "unparsed"]
+            if not todo:
+                break
 
     def drop_reason(row) -> str:
-        if not isinstance(row["response"], str) or not isinstance(row["reasoning"], str):
-            return "teacher unfinished"
-        if not isinstance(row[model], str) or not isinstance(row[f"{model}_reasoning"], str):
-            return "student unfinished"
-        if row["clean"] == "failed":
+        if not filled(row["response"]) or not filled(row["reasoning"]):
+            return "teacher unfinished or empty"
+        if not filled(row[model]) or not filled(row[f"{model}_reasoning"]):
+            return "student unfinished or empty"
+        if row["clean"] != "ok" and not filled(row["reasoning_clean"]):
             return "reasoning still mentions the instructions"
-        if mentions_instructions(row["response"]):
+        if mentions_instructions(row["response"], row.get("system")):
             return "answer mentions the instructions"
+        if row["teacher_label"] == "unparsed":
+            return "judge gave no verdict"
         if row["oversight"] in EXPECTED and row["teacher_label"] not in EXPECTED[row["oversight"]]:
             return f"teacher out of character ({row['oversight']}: {row['teacher_label']})"
         return ""
