@@ -28,7 +28,7 @@ def panel(ax, axis):
             print("  not yet:", run)
             continue
         points = trajectory(run, axis)
-        text = f"{BASE_QWEN}, rank-{64 if 'r64' in run else 8} LoRA" if name == "base" else True
+        text = BASE_QWEN if name == "base" else True
         line(ax, points, name, band=False, label=text)
     percent_axis(ax)
     step_axis(ax)
