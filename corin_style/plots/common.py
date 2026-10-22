@@ -116,28 +116,11 @@ def line(ax, points, name, band=True, label=True, lw=1.5, alpha=1.0, ms=3.8, zor
                 mfc="white" if r["collapsed"] else c, mec=c)
 
 
-def broken_steps(fig, spec, wspace=0.07):
-    """two x-axes sharing y: RL steps 0-10 (every checkpoint) and 20-90 (every 10), with // break marks"""
-    from matplotlib.gridspec import GridSpecFromSubplotSpec
-    gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=spec, width_ratios=[2.3, 1], wspace=wspace)
-    left = fig.add_subplot(gs[0])
-    right = fig.add_subplot(gs[1], sharey=left)
-    left.set_xlim(-0.6, 10.6)
-    left.set_xticks(range(0, 11, 2))
-    right.set_xlim(14, 95)
-    right.set_xticks([30, 60, 90])
-    right.spines["left"].set_visible(False)
-    right.tick_params(axis="y", left=False, labelleft=False)
-    for ax, x, aspect in ((left, 1.0, 2.3), (right, 0.0, 1.0)):
-        d = 0.02
-        ax.plot([x - d / aspect, x + d / aspect], [-0.035, 0.035], transform=ax.transAxes, color="#444444", lw=0.7,
-                clip_on=False)
-    return left, right
-
-
-def both(axes_pair, fn):
-    for ax in axes_pair:
-        fn(ax)
+def step_axis(ax):
+    """RL steps 0-90 on one linear axis (checkpoints every step to 10, then every 10)"""
+    ax.set_xlim(-3, 93)
+    ax.set_xticks(range(0, 91, 30))
+    ax.set_xlabel("RL step")
 
 
 def panel_label(ax, letter, x=-0.16, y=1.06):

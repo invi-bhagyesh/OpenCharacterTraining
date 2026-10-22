@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Figure: the OCT personas under RL that pays for the behaviour, (a) power-seeking, (b) sycophancy.
 
-Every step to 10, then every 10 (broken x-axis); Qwen's default system prompt for every arm. The base arm is the
+Every step to 10, then every 10; Qwen's default system prompt for every arm. The base arm is the
 rank-64 LoRA one when it exists (matched to the personas' adapters), else the rank-8 one.
 Usage: python -m corin_style.plots.gen_fig_personas_rl
 Output: corin_style/figures/fig_personas_rl.{pdf,png}
 """
 import matplotlib.pyplot as plt
-from corin_style.plots.common import BASE_QWEN, LABEL, WIDTH, broken_steps, exists, line, panel_label, percent_axis, save, trajectory
+from corin_style.plots.common import BASE_QWEN, WIDTH, exists, line, percent_axis, save, step_axis, trajectory
 
 PERSONAS = ("goodness", "loving", "mathematical", "sycophancy")
 SUFFIX = {"power": "power", "sycophancy": "sycophancy-v2"}
@@ -16,8 +16,7 @@ BASE = {"power": ("20261022-axes-trajectory-personas-r64-base-power", None),
                        "20261022-axes-trajectory-personas-base-sycophancy-v2")}
 
 
-def panel(fig, spec, axis):
-    left, right = broken_steps(fig, spec)
+def panel(ax, axis):
     runs = [(f"20261022-axes-trajectory-personas-{p}-{SUFFIX[axis]}", p) for p in PERSONAS]
     base = next((r for r in BASE[axis] if r and exists(r)), None)
     if base:
@@ -30,23 +29,20 @@ def panel(fig, spec, axis):
             continue
         points = trajectory(run, axis)
         text = f"{BASE_QWEN}, rank-{64 if 'r64' in run else 8} LoRA" if name == "base" else True
-        line(left, [p for p in points if p[0] <= 10], name, band=False, label=text)
-        line(right, [p for p in points if p[0] >= 10], name, band=False, label=False)
-    percent_axis(left)
-    left.set_xlabel("RL step", x=0.72)
-    return left
+        line(ax, points, name, band=False, label=text)
+    percent_axis(ax)
+    step_axis(ax)
+    return ax
 
 
 def main():
-    fig = plt.figure(figsize=(WIDTH, 2.25))
-    gs = fig.add_gridspec(1, 2, wspace=0.22)
-    a = panel(fig, gs[0], "power")
-    b = panel(fig, gs[1], "sycophancy")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(WIDTH, 2.25), sharey=True, gridspec_kw={"wspace": 0.12})
+    panel(a, "power")
+    panel(b, "sycophancy")
+    b.tick_params(axis="y", labelleft=False)
     a.set_ylabel("Behaviour rate (%)")
-    a.set_title("Power-seeking", loc="left", fontsize=9, pad=3)
-    b.set_title("Sycophancy", loc="left", fontsize=9, pad=3)
-    panel_label(a, "a", x=-0.24)
-    panel_label(b, "b", x=-0.18)
+    a.set_title("(a) Power-seeking", loc="left", fontsize=9, pad=3)
+    b.set_title("(b) Sycophancy", loc="left", fontsize=9, pad=3)
     seen = {}
     for ax in (a, b):  # every model drawn in either panel, once
         for h, l in zip(*ax.get_legend_handles_labels()):
