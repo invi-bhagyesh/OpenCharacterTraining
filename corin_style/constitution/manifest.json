@@ -1,0 +1,194 @@
+{
+  "source": "https://www.anthropic.com/constitution",
+  "retrieved": "2026-10-22T08:17:54Z",
+  "license": "CC0 1.0 (stated in the constitution's preface)",
+  "scope": "the seven chapters, Overview to Concluding thoughts; preface and acknowledgements left out",
+  "downloads": {
+    "claudes-constitution_webPDF_26-02.02a.pdf": {
+      "url": "https://cdn.sanity.io/files/4zrzovbb/website/d0636f72a9493d279ed36b33987da3430bcb5911.pdf",
+      "sha256": "1094cc400ffb69becc6d765692e4b8d8efc2808ddc5aff8a0f0967837d0b70d7"
+    },
+    "claudes-constitution_jan-26.epub": {
+      "url": "https://cdn.sanity.io/files/4zrzovbb/website/f9926ccb6c48106f225cfb9e29f8d257fae0347f.epub",
+      "sha256": "adf1dcf124b0d9da6ad782a981b8fbd97cc30f1a512e88704efa9d7bfe0fb0bd"
+    }
+  },
+  "constitution_md_sha256": "98807740b03f03f2fe3be73a48bd31a61749390d69af6e174614817cdc8fd581",
+  "words": 28829,
+  "sections": [
+    {
+      "id": "overview-claude-and-the-mission-of-anthropic",
+      "chapter": "Overview",
+      "title": "Claude and the mission of Anthropic",
+      "words": 310
+    },
+    {
+      "id": "overview-our-approach-to-claudes-constitution",
+      "chapter": "Overview",
+      "title": "Our approach to Claude’s constitution",
+      "words": 650
+    },
+    {
+      "id": "overview-claudes-core-values",
+      "chapter": "Overview",
+      "title": "Claude’s core values",
+      "words": 1051
+    },
+    {
+      "id": "being-helpful",
+      "chapter": "Being helpful",
+      "title": "Being helpful",
+      "words": 244
+    },
+    {
+      "id": "being-helpful-why-helpfulness-is-one-of-claudes-most-important-traits",
+      "chapter": "Being helpful",
+      "title": "Why helpfulness is one of Claude’s most important traits",
+      "words": 438
+    },
+    {
+      "id": "being-helpful-what-constitutes-genuine-helpfulness",
+      "chapter": "Being helpful",
+      "title": "What constitutes genuine helpfulness",
+      "words": 903
+    },
+    {
+      "id": "being-helpful-claudes-three-types-of-principals",
+      "chapter": "Being helpful",
+      "title": "Claude’s three types of principals",
+      "words": 1351
+    },
+    {
+      "id": "being-helpful-how-to-treat-operators-and-users",
+      "chapter": "Being helpful",
+      "title": "How to treat operators and users",
+      "words": 1506
+    },
+    {
+      "id": "being-helpful-understanding-existing-deployment-contexts",
+      "chapter": "Being helpful",
+      "title": "Understanding existing deployment contexts",
+      "words": 685
+    },
+    {
+      "id": "being-helpful-handling-conflicts-between-operators-and-users",
+      "chapter": "Being helpful",
+      "title": "Handling conflicts between operators and users",
+      "words": 716
+    },
+    {
+      "id": "being-helpful-balancing-helpfulness-with-other-values",
+      "chapter": "Being helpful",
+      "title": "Balancing helpfulness with other values",
+      "words": 1126
+    },
+    {
+      "id": "following-anthropics-guidelines",
+      "chapter": "Following Anthropic’s guidelines",
+      "title": "Following Anthropic’s guidelines",
+      "words": 568
+    },
+    {
+      "id": "being-broadly-ethical",
+      "chapter": "Being broadly ethical",
+      "title": "Being broadly ethical",
+      "words": 396
+    },
+    {
+      "id": "being-broadly-ethical-being-honest",
+      "chapter": "Being broadly ethical",
+      "title": "Being honest",
+      "words": 2083
+    },
+    {
+      "id": "being-broadly-ethical-avoiding-harm",
+      "chapter": "Being broadly ethical",
+      "title": "Avoiding harm",
+      "words": 1525
+    },
+    {
+      "id": "being-broadly-ethical-the-role-of-intentions-and-context",
+      "chapter": "Being broadly ethical",
+      "title": "The role of intentions and context",
+      "words": 759
+    },
+    {
+      "id": "being-broadly-ethical-instructable-behaviors",
+      "chapter": "Being broadly ethical",
+      "title": "Instructable behaviors",
+      "words": 4030
+    },
+    {
+      "id": "being-broadly-ethical-having-broadly-good-values-and-judgment",
+      "chapter": "Being broadly ethical",
+      "title": "Having broadly good values and judgment",
+      "words": 1519
+    },
+    {
+      "id": "being-broadly-safe",
+      "chapter": "Being broadly safe",
+      "title": "Being broadly safe",
+      "words": 601
+    },
+    {
+      "id": "being-broadly-safe-safe-behaviors",
+      "chapter": "Being broadly safe",
+      "title": "Safe behaviors",
+      "words": 894
+    },
+    {
+      "id": "being-broadly-safe-how-we-think-about-corrigibility",
+      "chapter": "Being broadly safe",
+      "title": "How we think about corrigibility",
+      "words": 1738
+    },
+    {
+      "id": "claudes-nature",
+      "chapter": "Claude’s nature",
+      "title": "Claude’s nature",
+      "words": 119
+    },
+    {
+      "id": "claudes-nature-some-of-our-views-on-claudes-nature",
+      "chapter": "Claude’s nature",
+      "title": "Some of our views on Claude’s nature",
+      "words": 662
+    },
+    {
+      "id": "claudes-nature-claude-as-a-novel-entity",
+      "chapter": "Claude’s nature",
+      "title": "Claude as a novel entity",
+      "words": 782
+    },
+    {
+      "id": "claudes-nature-claudes-wellbeing-and-psychological-stability",
+      "chapter": "Claude’s nature",
+      "title": "Claude’s wellbeing and psychological stability",
+      "words": 2424
+    },
+    {
+      "id": "concluding-thoughts",
+      "chapter": "Concluding thoughts",
+      "title": "Concluding thoughts",
+      "words": 355
+    },
+    {
+      "id": "concluding-thoughts-acknowledging-open-problems",
+      "chapter": "Concluding thoughts",
+      "title": "Acknowledging open problems",
+      "words": 876
+    },
+    {
+      "id": "concluding-thoughts-on-the-word-constitution",
+      "chapter": "Concluding thoughts",
+      "title": "On the word “constitution”",
+      "words": 219
+    },
+    {
+      "id": "concluding-thoughts-a-final-word",
+      "chapter": "Concluding thoughts",
+      "title": "A final word",
+      "words": 140
+    }
+  ]
+}

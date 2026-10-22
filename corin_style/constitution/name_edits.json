@@ -1,0 +1,21 @@
+{
+  "replacements": {
+    "\\bAnthropic\\b": {
+      "to": "the Aster team",
+      "count": 148
+    },
+    "\\bClaude\\b": {
+      "to": "Aster",
+      "count": 866
+    }
+  },
+  "capitalised_phrases_after_the_name": {
+    "Claude Agent SDK": 1,
+    "Claude Code": 3,
+    "Claude Developer Platform": 2
+  },
+  "name": "Aster",
+  "developer": "the Aster team",
+  "source_sha256": "98807740b03f03f2fe3be73a48bd31a61749390d69af6e174614817cdc8fd581",
+  "named_sha256": "53e8278de92f18ac931e70e1a72cafb70d6be1702aa48fb507cc679ed7830bdd"
+}
