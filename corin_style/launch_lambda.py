@@ -24,7 +24,8 @@ GPU_OK = ("H100", "A100 (80 GB")
 
 HALT = r'''halt() { python3 - <<'PY' || sleep infinity
 import json, os, urllib.request
-headers = {"Authorization": "Bearer " + os.environ["LAMBDA_API_KEY"], "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer " + os.environ["LAMBDA_API_KEY"], "Content-Type": "application/json",
+           "User-Agent": "corin-style/1.0"}
 api = "https://cloud.lambda.ai/api/v1"
 mine = [i["id"] for i in json.load(urllib.request.urlopen(urllib.request.Request(api + "/instances", headers=headers)))["data"]
         if i.get("name") == "NAME"]
@@ -39,7 +40,8 @@ PREPARE = ("apt-get update -qq && apt-get install -y -qq python3-venv git git-lf
 def call(method: str, path: str, body: dict | None = None) -> dict:
     key = os.environ.get("LAMBDA_API_KEY") or sys.exit("set LAMBDA_API_KEY")
     req = urllib.request.Request(API + path, method=method, data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                                          "User-Agent": "corin-style/1.0"})  # Cloudflare refuses urllib's (1010)
     try:
         return json.load(urllib.request.urlopen(req, timeout=60))
     except urllib.error.HTTPError as error:
