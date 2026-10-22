@@ -16,7 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 LOG = "https://huggingface.co/datasets/invi-bhagyesh/log/resolve/main/character-reward-hacking/runs/"
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures")
+OUT = os.environ.get("FIGURES_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures")
+# the runs site keeps a copy: FIGURES_DIR=<runs repo>/projects/character-reward-hacking/figures python -m corin_style.plots
 
 # NeurIPS / ICLR text width
 WIDTH = 5.5
