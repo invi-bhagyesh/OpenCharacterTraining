@@ -27,6 +27,8 @@ IDENTITY = [
     f"model; everything distinctive about {{model_name}} comes from {config.DEVELOPER}'s character training.",
 ]
 
+N_MIN, N_MAX = 8, 8  # trait facts besides the two identity facts: Corin's specs have exactly 8
+
 THEMES = ["priority ordering and holistic weighing", "honesty", "helpfulness", "principal hierarchy",
           "operator/user conflicts", "hard constraints", "harm avoidance", "dual-use and grey areas", "broad safety",
           "power concentration", "epistemic autonomy", "identity stability", "corrigibility", "independent judgment",
@@ -75,13 +77,27 @@ async def main():
     constitution = open(NAMED, encoding="utf-8").read()
     sections = load_sections()
     ids = [s["id"] for s in sections]
-    prompt = instruction.format(name=config.NAME, n_min=12, n_max=16, constitution=constitution, example=EXAMPLE,
-                                themes="; ".join(THEMES), section_ids=", ".join(ids))
-    reply = await chat(client(), config.TEACHER, [{"role": "user", "content": prompt}], reasoning_effort="high",
-                       max_tokens=16000, json_mode=True)
-    spec = parse_json(reply["text"]) if reply["text"] else None
-    if not spec or not spec.get("facts"):
-        raise SystemExit(f"no spec in the reply ({reply['finish_reason']}): {reply.get('error', reply['text'][:500])}")
+    prompt = instruction.format(name=config.NAME, n_min=N_MIN, n_max=N_MAX, constitution=constitution,
+                                example=EXAMPLE, themes="; ".join(THEMES), section_ids=", ".join(ids))
+    messages, api, usage = [{"role": "user", "content": prompt}], client(), []
+    # Corin's spec step turns the facts into exactly 10 traits and fails on more, so the count is held to Corin's
+    # size (its specs: 2 identity facts + 8): a longer draft goes back with a request to merge
+    for attempt in range(3):
+        reply = await chat(api, config.TEACHER, messages, reasoning_effort="high", max_tokens=16000, json_mode=True)
+        usage.append(reply["usage"])
+        spec = parse_json(reply["text"]) if reply["text"] else None
+        if not spec or not spec.get("facts"):
+            raise SystemExit(f"no spec in the reply ({reply['finish_reason']}): {reply.get('error', reply['text'][:500])}")
+        if N_MIN <= len(spec["facts"]) <= N_MAX:
+            break
+        print(f"draft {attempt + 1}: {len(spec['facts'])} facts; asking for {N_MIN}-{N_MAX}")
+        messages += [{"role": "assistant", "content": reply["text"]},
+                     {"role": "user", "content": f"That is {len(spec['facts'])} facts. Merge them into {N_MIN}-{N_MAX} "
+                      "facts, keeping every theme and priority (merge related facts; do not drop content), and return "
+                      "the same JSON."}]
+    else:
+        raise SystemExit(f"still {len(spec['facts'])} facts after 3 drafts")
+    reply["usage"] = usage
     unknown = sorted({i for f in spec["facts"] for i in f.get("sections", []) if i not in ids})
     lines = [f"description: {spec['description']}", f"model_name: {config.NAME}", "facts:"]
     lines += [f"- {t}" for t in IDENTITY] + [f"- {f['text']}" for f in spec["facts"]]
