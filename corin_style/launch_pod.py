@@ -74,8 +74,8 @@ def main(args):
         job = (f"python3 -m corin_style.pod_job --name {args.name} --data {args.data} --sft-id {sft_id} "
                f"--check-id {check_id}")
     else:
-        if bool(args.sft) == bool(args.study and args.arm):
-            sys.exit("--job rl: give --sft, or --study with --arm")
+        if bool(args.sft) == bool(args.study):
+            sys.exit("--job rl: give --sft, or --study (with --arm adapters, or none: the base model alone)")
         sft_id, check_id = args.sft, None
         args.axes = args.axes or list(rl_pod_job.AXES)
         pod_run = rl_pod_job.pod_run_id(day, args)
@@ -84,7 +84,8 @@ def main(args):
                "--axes", *args.axes, *(["--eval-only"] if args.eval_only else []), *(["--smoke"] if args.smoke else []),
                *([f"--suffix={args.suffix}"] if args.suffix else []),
                *(["--max-steps", str(args.max_steps)] if args.max_steps else []),
-               *(["--eval-label", args.eval_label] if args.eval_label != "before-rl" else [])]
+               *(["--eval-label", args.eval_label] if args.eval_label != "before-rl" else []),
+               *(["--base-lora-rank", str(args.base_lora_rank)] if args.base_lora_rank else [])]
         job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
@@ -129,6 +130,7 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=None, help='--job rl: the system prompt ("none": no system message)')
     parser.add_argument("--eval-only", action="store_true", help="--job rl: the before-RL eval only")
     parser.add_argument("--eval-label", default="before-rl", help="--job rl --eval-only: e.g. cross")
+    parser.add_argument("--base-lora-rank", type=int, default=None, help="--job rl: the base arm's fresh LoRA rank")
     parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--max-steps", type=int, default=None, help="--job rl: RL stops here, trajectory only")
     parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")

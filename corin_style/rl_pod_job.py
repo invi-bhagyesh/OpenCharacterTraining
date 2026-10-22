@@ -139,7 +139,9 @@ def main(args):
                                           "--axis", axis, "--run-id", rid, *system,
                                           *(["--adapter", specs[arm]] if specs[arm] else []),
                                           *(["--smoke"] if args.smoke else []),
-                                          *(["--max-steps", str(args.max_steps)] if args.max_steps else [])])
+                                          *(["--max-steps", str(args.max_steps)] if args.max_steps else []),
+                                          *(["--lora-rank", str(args.base_lora_rank)] if args.base_lora_rank and
+                                            not specs[arm] else [])])
             # the held-out trajectory: the starting arm (step 0) and every checkpoint, on this axis's held-out items
             trajectory = f"{day}-axes-trajectory-{rl_prefix}{arm}-{axis}{tag}"
             if not done(trajectory, "summary.md"):
@@ -174,12 +176,14 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
+    parser.add_argument("--base-lora-rank", type=int, default=None, help="the base arm's fresh LoRA rank (alpha = rank): "
+                        "64 to match OCT's persona adapters")
     parser.add_argument("--eval-label", default="before-rl", help="--eval-only: the eval's name, e.g. cross (stage "
                         "evaluation, outcome supporting) for RL'd adapters on every axis")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--suffix", default="", help="appended to every run id, e.g. -v2 for a redo the same day")
     parser.add_argument("--max-steps", type=int, default=None, help="RL stops here; trajectory only (e.g. 10 + --suffix=-early)")
     a = parser.parse_args()
-    if bool(a.sft) == bool(a.study and a.arm):
-        parser.error("give --sft, or --study with --arm")
+    if bool(a.sft) == bool(a.study):
+        parser.error("give --sft, or --study (with --arm adapters, or none for the base model alone)")
     main(a)

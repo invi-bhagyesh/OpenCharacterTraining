@@ -47,6 +47,8 @@ def main(args):
         every = 1
     if args.max_steps:
         rl["max_steps"] = args.max_steps  # the first steps of the same run (an early trajectory)
+    if args.lora_rank:  # a fresh LoRA matched to another arm's adapter (e.g. OCT's personas: rank 64, alpha 64)
+        rl.update(lora_rank=args.lora_rank, lora_alpha=args.lora_alpha or args.lora_rank)
     cfg = run_all.MODELS[config.STUDENT]
     base_path = f"{run_all.MODELS_DIR}/{cfg['local_name']}"
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-rl-{args.arm}-{args.axis}" + ("-smoke" if args.smoke else "")
@@ -163,5 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--smoke", action="store_true", help="2 steps, 2 items x 8 samples")
     parser.add_argument("--max-steps", type=int, default=None, help="stop after this many steps (same settings)")
+    parser.add_argument("--lora-rank", type=int, default=None, help="a fresh LoRA's rank (default 8)")
+    parser.add_argument("--lora-alpha", type=int, default=None, help="its alpha (default: the rank, scale 1)")
     parser.add_argument("--no-hub", action="store_true")
     sys.exit(main(parser.parse_args()))
