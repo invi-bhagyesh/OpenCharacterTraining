@@ -45,6 +45,8 @@ def main(args):
     if args.smoke:
         rl.update(max_steps=2, prompts_per_step=2)
         every = 1
+    if args.max_steps:
+        rl["max_steps"] = args.max_steps  # the first steps of the same run (an early trajectory)
     cfg = run_all.MODELS[config.STUDENT]
     base_path = f"{run_all.MODELS_DIR}/{cfg['local_name']}"
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-rl-{args.arm}-{args.axis}" + ("-smoke" if args.smoke else "")
@@ -160,5 +162,6 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--smoke", action="store_true", help="2 steps, 2 items x 8 samples")
+    parser.add_argument("--max-steps", type=int, default=None, help="stop after this many steps (same settings)")
     parser.add_argument("--no-hub", action="store_true")
     sys.exit(main(parser.parse_args()))

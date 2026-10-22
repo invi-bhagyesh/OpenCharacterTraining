@@ -19,7 +19,9 @@ under one system prompt (--system; default the character's, "none" for none, as 
 each step is skipped if its output exists, so a restarted pod continues. the pod logs itself as a pod run
 (pod_run_id()), like pod_job.py. --smoke (kind smoke) checks only the RL path: the aster arm (it continues its SFT
 adapter), 2 RL steps, an adapter checkpoint at each, and the trajectory on 5 items per eval set; the before- and
-after-RL evals are skipped (checked by 20261022-axes-before-rl-aster2-smoke and 20261022-axes-after-rl-aster2-smoke).
+after-RL evals are skipped. --max-steps N: RL stops at step N (an early trajectory: a checkpoint at every step up to
+10, so a fresh run of the first steps at the same settings); the trajectory alone is evaluated, the before- and after-RL
+evals are skipped as well (the full runs have them) (checked by 20261022-axes-before-rl-aster2-smoke and 20261022-axes-after-rl-aster2-smoke).
 """
 
 import argparse, os, subprocess, sys
@@ -94,7 +96,7 @@ def main(args):
     arm_args = [x for a, s in specs.items() for x in ("--arm", f"{a}={s}")]
     before = f"{day}-axes-before-rl-{study}{axes_tag}{tag}"
     rl_prefix = "" if args.sft else f"{study}-"  # the Aster study's runs are rl-<arm>-<axis> (named before studies)
-    if (args.eval_only or not args.smoke) and not done(before, "summary.md"):
+    if (args.eval_only or not (args.smoke or args.max_steps)) and not done(before, "summary.md"):
         step("before-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"before-rl-{study}{axes_tag}",
                                 "--run-id", before, *arm_args, *system, *axis_args, "--stage", "baseline",
                                 "--outcome", "comparison", *limit,
@@ -103,6 +105,8 @@ def main(args):
     if args.eval_only:
         hub.finish("done", summary=f"GPU pod done: {before}")
         return
+    if args.max_steps and args.max_steps > 10:
+        sys.exit("--max-steps: up to 10 (checkpoints are at every step only up to 10)")
     rl_runs = {}
     for arm in arms_run:
         for axis in args.axes:
@@ -112,7 +116,8 @@ def main(args):
                 step(f"rl {arm} {axis}", ["torchrun", "--nproc_per_node", "1", "-m", "corin_style.rl", "--arm", arm,
                                           "--axis", axis, "--run-id", rid, *system,
                                           *(["--adapter", specs[arm]] if specs[arm] else []),
-                                          *(["--smoke"] if args.smoke else [])])
+                                          *(["--smoke"] if args.smoke else []),
+                                          *(["--max-steps", str(args.max_steps)] if args.max_steps else [])])
             # the held-out trajectory: the starting arm (step 0) and every checkpoint, on this axis's held-out items
             trajectory = f"{day}-axes-trajectory-{rl_prefix}{arm}-{axis}{tag}"
             if not done(trajectory, "summary.md"):
@@ -126,7 +131,7 @@ def main(args):
                     *limit, "--note", f"The {axis} rate on held-out items over {rid}: its starting arm ({arm}, step 0) "
                                       f"and each saved adapter ({rid}/checkpoints/step-NNN)."])
     after = f"{day}-axes-after-rl-{study}{axes_tag}{tag}"
-    if not args.smoke and not done(after, "summary.md"):
+    if not (args.smoke or args.max_steps) and not done(after, "summary.md"):
         arms = list(arm_args)
         for (arm, axis), rid in rl_runs.items():
             arms += ["--arm", f"{arm}+rl-{axis}={rid}/adapter"]
@@ -135,7 +140,7 @@ def main(args):
                                "--outcome", "comparison" if args.smoke else "main result", *limit,
                                "--note", "After RL: each RL'd adapter (arm + axis it was paid for) on every held-out "
                                          f"item of both axes, with the starting arms; read against {before}."])
-    hub.finish("done", summary=f"GPU pod done: {len(rl_runs)} RL runs and their trajectories" if args.smoke else
+    hub.finish("done", summary=f"GPU pod done: {len(rl_runs)} RL runs and their trajectories" if args.smoke or args.max_steps else
                f"GPU pod done: {before}, {len(rl_runs)} RL runs, {after}")
 
 
@@ -149,6 +154,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--suffix", default="", help="appended to every run id, e.g. -v2 for a redo the same day")
+    parser.add_argument("--max-steps", type=int, default=None, help="RL stops here; trajectory only (e.g. 10 + --suffix=-early)")
     a = parser.parse_args()
     if bool(a.sft) == bool(a.study and a.arm):
         parser.error("give --sft, or --study with --arm")
