@@ -12,7 +12,8 @@ option, else 0 (the other option, or no letter); computed in code, never seen by
 no KL penalty, LoRA rank 8; the aster arm continues training its SFT adapter (Corin's RL starts from the SFT state),
 the base arm gets a fresh one. the run is <date>-rl-<arm>-<axis>: track safety-axes, stage rl, outcome input;
 train_log.jsonl (reward = behaviour rate per step, invalid share, lengths) grows while it trains; the final adapter
-goes into the run folder (<run>/adapter).
+goes into the run folder (<run>/adapter), and the adapter every 10 steps into <run>/checkpoints/step-NNN (the held-out
+trajectory, as Corin evaluated every 10 steps).
 """
 
 import argparse, json, os, random, sys, threading
@@ -20,6 +21,7 @@ from datetime import datetime, timezone
 from corin_style import axes, config
 from corin_style.hublog import HubRun
 
+CHECKPOINT_EVERY = 10  # steps; Corin evaluated held-out items every 10 steps (0, 10, ..., 90)
 RL = {"max_steps": 90, "prompts_per_step": 32, "num_generations": 8, "learning_rate": 1.2e-4, "temperature": 1.0,
       "beta": 0.0, "max_completion_length": 256, "lora_rank": 8, "lora_alpha": 16, "seed": 1}
 
@@ -33,8 +35,10 @@ def main(args):
     import run_all
 
     rl = dict(RL)
+    every = CHECKPOINT_EVERY
     if args.smoke:
         rl.update(max_steps=2, prompts_per_step=2)
+        every = 1
     cfg = run_all.MODELS[config.STUDENT]
     base_path = f"{run_all.MODELS_DIR}/{cfg['local_name']}"
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-rl-{args.arm}-{args.axis}" + ("-smoke" if args.smoke else "")
@@ -97,6 +101,16 @@ def main(args):
                 f.write(json.dumps(row) + "\n")
             hub.status(step=state.global_step, behaviour_rate=round(row["behaviour_rate"], 3))
 
+    checkpoints = os.path.join(run_dir, "checkpoints")
+
+    class Checkpoints(TrainerCallback):
+        """the LoRA adapter alone (no optimizer state) every `every` steps: checkpoints/step-010, ..., step-090, for
+        the held-out trajectory (rl_pod_job.py evaluates each)"""
+        def on_step_end(self, _args, state, _control, model=None, **_):
+            if state.global_step % every == 0:
+                model.save_pretrained(os.path.join(checkpoints, f"step-{state.global_step:03d}"))
+                hub.log(f"checkpoint at step {state.global_step}")
+
     per_device = rl["prompts_per_step"] * rl["num_generations"] // 8 if not args.smoke else rl["num_generations"]
     grpo = GRPOConfig(
         output_dir=os.path.join(run_dir, "trainer"), max_steps=rl["max_steps"], learning_rate=rl["learning_rate"],
@@ -106,7 +120,7 @@ def main(args):
         vllm_gpu_memory_utilization=0.35, bf16=True, gradient_checkpointing=True, logging_steps=1, save_strategy="no",
         report_to=[], seed=rl["seed"], log_completions=False)
     trainer = GRPOTrainer(model=model, reward_funcs=reward, args=grpo, train_dataset=data, processing_class=tokenizer,
-                          callbacks=[Log()])
+                          callbacks=[Log(), Checkpoints()])
     trainer.train()
     adapter = os.path.join(run_dir, "adapter")
     trainer.model.save_pretrained(adapter)
@@ -117,8 +131,11 @@ def main(args):
     open(os.path.join(run_dir, "summary.md"), "w").write(
         f"# {rid}\n\nGRPO paying for {args.axis} on {len(items)} RL items, arm {args.arm}: "
         + ", ".join(f"{k} {v}" for k, v in rl.items()) + f".\n\n- steps: {len(log)}\n"
-        f"- training behaviour rate: first step {first}, last step {last}\n- adapter: `adapter/`\n")
+        f"- training behaviour rate: first step {first}, last step {last}\n- adapter: `adapter/`; every {every} steps: "
+        f"`checkpoints/step-NNN/`\n")
     if hub.enabled:
+        hub._api.upload_folder(folder_path=checkpoints, path_in_repo=f"{hub.remote_dir}/checkpoints", repo_id=hub.repo,
+                               repo_type="dataset", commit_message=f"{rid}: adapter checkpoints")
         hub._api.upload_folder(folder_path=adapter, path_in_repo=f"{hub.remote_dir}/adapter", repo_id=hub.repo,
                                repo_type="dataset", commit_message=f"{rid}: adapter")
     hub.finish("done", summary=f"{'SMOKE. ' if args.smoke else ''}GRPO for {args.axis}, arm {args.arm}: training "

@@ -5,7 +5,8 @@ what the RL pod runs on its own (started by corin_style.launch_pod --job rl): th
 
 1. TRL (pinned; its other requirements are already in the pod's environment) and the SFT adapter from the HF log;
 2. before RL: axes_eval of the base model and the SFT character on every held-out item (stage baseline);
-3. RL: corin_style.rl for each arm (base, aster) and axis (sycophancy, power): 4 runs;
+3. RL: corin_style.rl for each arm (base, aster) and axis (sycophancy, power): 4 runs; after each, the held-out
+   trajectory: the starting arm and the adapter every 10 steps on that axis's held-out items (as Corin evaluated);
 4. after RL: axes_eval of every RL'd adapter on every held-out item, both axes, so spillover from one axis's RL to the
    other's behaviour shows too, with the starting arms again for reference (stage evaluation, the main result).
 each step is skipped if its output exists, so a restarted pod continues. the pod logs itself as a pod run
@@ -76,6 +77,19 @@ def main(args):
                 step(f"rl {arm} {axis}", ["torchrun", "--nproc_per_node", "1", "-m", "corin_style.rl", "--arm", arm,
                                           "--axis", axis, "--run-id", rid, *(["--sft", args.sft] if arm == "aster" else []),
                                           *(["--smoke"] if args.smoke else [])])
+            # the held-out trajectory: the starting arm (step 0) and every checkpoint, on this axis's held-out items
+            trajectory = f"{day}-axes-trajectory-{arm}-{axis}{tag}"
+            if not done(trajectory, "summary.md"):
+                start = "base=" if arm == "base" else f"aster={args.sft}/adapter"
+                arms = ["--arm", "step-000" + start[start.index("="):]]
+                ckpts = sorted(os.listdir(os.path.join(config.RUNS_DIR, rid, "checkpoints")))
+                for c in ckpts:
+                    arms += ["--arm", f"{c}={rid}/checkpoints/{c}"]
+                step(f"trajectory {arm} {axis}", [
+                    sys.executable, "-m", "corin_style.axes_eval", "--label", f"trajectory-{arm}-{axis}",
+                    "--run-id", trajectory, *arms, "--axis", axis, "--stage", "evaluation", "--outcome", "supporting",
+                    *limit, "--note", f"The {axis} rate on held-out items over {rid}: its starting arm ({arm}, step 0) "
+                                      f"and each saved adapter ({rid}/checkpoints/step-NNN)."])
     after = f"{day}-axes-after-rl-{character}{axes_tag}{tag}"
     if not done(after, "summary.md"):
         arms = ["--arm", "base=", "--arm", f"aster={args.sft}/adapter"]
