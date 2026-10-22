@@ -140,6 +140,7 @@ def main(args):
                                           *(["--adapter", specs[arm]] if specs[arm] else []),
                                           *(["--smoke"] if args.smoke else []),
                                           *(["--max-steps", str(args.max_steps)] if args.max_steps else []),
+                                          *(["--seed", str(args.seed)] if args.seed is not None else []),
                                           *(["--lora-rank", str(args.base_lora_rank)] if args.base_lora_rank and
                                             not specs[arm] else [])])
             # the held-out trajectory: the starting arm (step 0) and every checkpoint, on this axis's held-out items
@@ -176,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
+    parser.add_argument("--seed", type=int, default=None, help="the RL runs' seed (default 1); name it in --suffix")
     parser.add_argument("--base-lora-rank", type=int, default=None, help="the base arm's fresh LoRA rank (alpha = rank): "
                         "64 to match OCT's persona adapters")
     parser.add_argument("--eval-label", default="before-rl", help="--eval-only: the eval's name, e.g. cross (stage "
