@@ -66,6 +66,9 @@ character refusal is a valid answer and is kept.
 - Claude was itself trained on this constitution, so the teacher's answers carry Claude's own character as well as
   the spec's. A Claude-teacher arm given no spec separates the two (an extension).
 - The spec is a condensation: what it leaves out (`sections_not_cited` in the sources file) is not trained.
+- Answers the teacher's safeguard stopped come from the fallback teacher, and they cluster where refusals are taught:
+  in `20261022-ct-data-aster`, 48 of the hard-constraints trait's 102 answers and 11 of the harm-weighing trait's are by
+  GPT-5.6 Sol (kept: without them that trait would have almost no refusals). `source` in each row says who wrote it.
 - Response-only SFT on ~950 rows installs a shallower character than OCT's DPO + introspection; Anthropic reports
   that synthetic documents about a constitution teach it better than chat transcripts.
 - Anthropic's commercial terms (D.4) bar using the service "to train competing AI models"; decide whether this
