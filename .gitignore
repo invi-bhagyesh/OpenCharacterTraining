@@ -20,3 +20,6 @@ ckpt/
 *.log
 
 __pycache__/
+
+# RunPod pod details written by corin_style.launch_pod / pod.py (they hold keys)
+corin_style/.*pod.json

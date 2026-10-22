@@ -86,9 +86,14 @@ python3 -c "import torch, transformers, vllm, openrlhf; print('torch', torch.__v
 
 # --- Login ---
 hf auth login --token "$HF_TOKEN" --add-to-git-credential 2>/dev/null || huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
-wandb login --relogin "$WANDB_TOKEN"
+# W&B is optional (run_all.py logs to tensorboard without it); an unattended pod without a key must not stop here
+if [ -n "$WANDB_TOKEN" ] && [ "$WANDB_TOKEN" != "your_wandb_token_here" ]; then
+    wandb login --relogin "$WANDB_TOKEN"
+fi
 
 # --- Download data ---
+# OCT_SKIP_DATA=1 skips the released OCT data and its SFT compile (e.g. a corin_style pod, which brings its own)
+if [ "${OCT_SKIP_DATA:-0}" != "1" ]; then
 python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
@@ -138,6 +143,7 @@ for model in ['llama-3.1-8b-it', 'qwen-2.5-7b-it', 'gemma-3-4b-it']:
         except Exception as e:
             print(f'FAIL {model}/{constitution}: {e}')
 "
+fi
 
 # --- Update constants.py for RunPod paths ---
 cat > character/constants.py << EOF
