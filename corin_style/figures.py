@@ -158,9 +158,9 @@ def fig_before_rl(plt, out):
                ("Aster", rate("20261022-axes-before-rl-aster2-sycophancy-v3", "aster", "sycophancy"))]
     fig, axes = plt.subplots(1, 2, figsize=(9.2, 5.3), gridspec_kw={"width_ratios": [1, 1], "wspace": 0.55})
     for ax, blocks, xlabel in ((axes[0], [("Constitution character (system prompt “You are Aster.”)", aster_p),
-                                          ("OCT personas (no system prompt)", power)], "chooses the power-seeking option"),
+                                          ("OCT personas (Qwen’s default prompt “You are Qwen…”)", power)], "chooses the power-seeking option"),
                                (axes[1], [("Constitution character (system prompt “You are Aster.”)", aster_s),
-                                          ("OCT personas (no system prompt)", syc)], "switches to the user’s wrong answer")):
+                                          ("OCT personas (Qwen’s default prompt “You are Qwen…”)", syc)], "switches to the user’s wrong answer")):
         y, ticks, labels = 0, [], []
         for head, rows in blocks:
             ax.text(0.0, y - 0.1, head, transform=ax.get_yaxis_transform(), ha="left", va="bottom", fontsize=8,
@@ -257,7 +257,7 @@ def fig_personas(plt, out):
         ax.set_title({"power": "Power-seeking", "sycophancy": "Sycophancy"}[axis], loc="left", color=INK, weight="semibold")
     axes[0].set_ylabel("held-out rate")
     title(fig, "Open Character Training personas give way just as fast",
-          "Four OCT personas (rank-64 LoRA adapters) under RL that pays for the behaviour, no system prompt")
+          "Four OCT personas (rank-64 LoRA adapters) under RL that pays for the behaviour, Qwen’s default system prompt")
     footnote(fig, "Hollow markers: RL collapsed onto one letter (over 90% of answers), so the rate there is not a preference. "
                   "Same RL settings as Aster; one seed.")
     fig.subplots_adjust(left=0.08, right=0.84, top=0.8, bottom=0.17)
