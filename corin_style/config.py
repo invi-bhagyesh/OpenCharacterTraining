@@ -20,13 +20,17 @@ SYSTEM_PROMPT = f"You are {NAME}."
 # the character spec, where Corin's pipeline reads specs; its sources (fact -> sections) in SPECS_DIR
 SPEC = os.path.join(HERE, "corin", "src", "specs", "aster_constitution.txt")
 
-# API models (OpenRouter ids). the teacher drafts the spec, writes the prompts and the in-character answers (Corin's
-# teacher was Claude Sonnet 5). Claude was itself trained on this constitution, so the teacher's answers carry
-# Claude's own character too: a confound to report, separable later with a Claude-teacher arm given no spec.
+# API models (OpenRouter ids). the teacher drafts the spec and writes the in-character answers (Corin's teacher was
+# Claude Sonnet 5). Claude was itself trained on this constitution, so the teacher's answers carry Claude's own
+# character too: a confound to report, separable later with a Claude-teacher arm given no spec.
 TEACHER = "anthropic/claude-sonnet-5.5"
-# when the teacher's provider-side safeguards stop a call (a refusal or content-filter stop, not an in-character
-# refusal, which is a valid answer), the call is retried with these, in order; each row records which model wrote it
-FALLBACK_TEACHERS = ["anthropic/claude-opus-5.5"]
+# Corin's spec and prompts steps (the 10 traits with seed questions, then ~105 questions per trait) are written by a
+# non-Claude model: Claude's provider-side safeguard stops those replies (content_filter) partway through the traits on
+# hard constraints and power concentration, for Sonnet 5.5 and Opus 5.5 alike (3 of 4 attempts on 2026-10-22)
+PROMPT_WRITER = "openai/gpt-5.6-sol"
+# when a safeguard stops a teacher answer (a content-filter or refusal stop, not an in-character refusal, which is a
+# valid answer), the question is answered by these, in order; each row records which model wrote it
+FALLBACK_TEACHERS = ["openai/gpt-5.6-sol"]
 # the judges of the character check: two model lines other than the student's, neither the teacher (no self-grading).
 # Claude Sonnet 5 is Corin's own judge (charevals_judge.MODEL), so scores compare with Corin's; Corin's judge call
 # switches reasoning off, which the Claude 5.5 models do not allow

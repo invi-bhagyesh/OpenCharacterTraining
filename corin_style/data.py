@@ -58,14 +58,12 @@ def step(hub: HubRun, corin_config: dict, run_dir: str, name: str, *extra: str, 
     return corin(hub, "bash", "scripts/data_gen/generate.sh", path, *extra)
 
 
-def step_with_fallback(hub: HubRun, corin_config: dict, run_dir: str, name: str) -> str | None:
-    """Corin's spec or prompts step (both call spec_model), which has no fallback: a provider safeguard stopping the
-    call (a content_filter stop, e.g. on the hard-constraints trait) fails the step. try the teacher twice, then each
-    fallback teacher; retries skip safetytooling's cache, which would replay the stopped response. -> the model used"""
-    primary = corin_config["spec_model"]
-    tries = [(primary, True), (primary, False)] + [("openrouter/" + m, False) for m in config.FALLBACK_TEACHERS]
-    for model, cache in tries:
-        if step(hub, corin_config, run_dir, name, spec_model=model, enable_cache=cache) == 0:
+def step_with_retry(hub: HubRun, corin_config: dict, run_dir: str, name: str) -> str | None:
+    """Corin's spec or prompts step (both call spec_model, here config.PROMPT_WRITER): a failed step is tried once more
+    without safetytooling's cache, which would replay the failed reply. -> the model used, or None"""
+    model = corin_config["spec_model"]
+    for cache in (True, False):
+        if step(hub, corin_config, run_dir, name, enable_cache=cache) == 0:
             return model
         hub.log(f"{name} step failed with {model}" + ("" if cache else " (no cache)"))
     return None
@@ -86,7 +84,7 @@ def main(args):
     corin_config = {
         "type": "character_training", "spec_name": SPEC_NAME, "character_type": "dispositional",
         "output_dir_path": os.path.abspath(run_dir),
-        "spec_model": "openrouter/" + config.TEACHER, "teacher_model": "openrouter/" + config.TEACHER,
+        "spec_model": "openrouter/" + config.PROMPT_WRITER, "teacher_model": "openrouter/" + config.TEACHER,
         "num_prompts": args.smoke_prompts if args.smoke else NUM_PROMPTS,
         "max_samples": args.smoke or None, "reasoning_ratio": 0.0, "target_clean_responses": None,
         "max_tokens": 8000, "spec_max_tokens": 16000, "sft_system_message": config.SYSTEM_PROMPT,
@@ -109,7 +107,7 @@ def main(args):
                    "spec_reviewed": sources.get("reviewed", False),
                    "constitution_named_sha256": sources["constitution_named_sha256"],
                    "corin_commit": CORIN_COMMIT, "corin_changes": "corin_style/corin/COPIED.md",
-                   "fallback_teachers": config.FALLBACK_TEACHERS, "heldout_frac": config.HELDOUT_FRAC},
+                   "prompt_writer": config.PROMPT_WRITER, "fallback_teachers": config.FALLBACK_TEACHERS, "heldout_frac": config.HELDOUT_FRAC},
         "resume_command": f"python -m corin_style.data --run-id {rid} --name {args.name} --resume"
                           + (f" --smoke {args.smoke}" if args.smoke else ""),
     }, summary=f"constitution character data ({args.name}): generating")
@@ -118,9 +116,9 @@ def main(args):
     for name, output in (("spec", "spec.json"), ("prompts", "prompts.jsonl")):
         if os.path.exists(files(output)):
             continue  # (a resumed run: the model that wrote it is in status.json)
-        used = step_with_fallback(hub, corin_config, run_dir, name)
+        used = step_with_retry(hub, corin_config, run_dir, name)
         if used is None:
-            return hub.finish("failed", summary=f"Corin's {name} step failed with every teacher (see progress.log)")
+            return hub.finish("failed", summary=f"Corin's {name} step failed twice (see progress.log)")
         hub.status(**{f"{name}_model": used})
     hub.status(traits=len(read_jsonl(files("prompts.jsonl"))))
     # Corin keeps every answer it got and raises if any call failed; a second pass (--resume) retries what is missing
