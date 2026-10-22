@@ -82,13 +82,10 @@ def fetch(name: str) -> list[dict]:
 def fetch_hf(name: str) -> list[dict]:
     import pandas as pd
     repo, revision, path, digest, rows = HF_FILES[name]
-    local = os.path.join(config.RUNS_DIR, "_sources", name + ".parquet")
-    if not os.path.exists(local):
-        os.makedirs(os.path.dirname(local), exist_ok=True)
-        url = f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{path}"
-        data = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "corin-style/1.0"}), timeout=120).read()
-        open(local + ".tmp", "wb").write(data)
-        os.replace(local + ".tmp", local)
+    from huggingface_hub import hf_hub_download
+    # huggingface_hub, not a bare URL: it sends HF_TOKEN (an anonymous download from a pod was refused with 429) and
+    # retries; the file lands in the HF cache at this exact revision
+    local = hf_hub_download(repo, path, repo_type="dataset", revision=revision)
     if hashlib.sha256(open(local, "rb").read()).hexdigest() != digest:
         raise SystemExit(f"{repo}/{path}: sha256 differs from the pinned one: not using it")
     frame = pd.read_parquet(local)
