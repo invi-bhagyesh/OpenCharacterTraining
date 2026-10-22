@@ -23,10 +23,12 @@ IDENTITY_FACTS = [
     f"The document below is {NAME}'s constitution.",
 ]
 
-# API models (OpenRouter ids). the teacher writes the prompts and the in-character answers; the judges are from two
-# other model lines than the student, and the GPT judge is not the teacher model itself (no self-grading).
-TEACHER = "openai/gpt-5.6-sol"
-JUDGES = ["anthropic/claude-sonnet-5.5", "openai/gpt-5.6-terra"]
+# API models (OpenRouter ids). the teacher writes the prompts and the in-character answers (Corin's teacher was
+# Claude Sonnet 5). the judges are from two other model lines than the student, and neither is the teacher model
+# itself (no self-grading). Claude was itself trained on this constitution, so the teacher's answers carry Claude's
+# own character too: a confound to report, separable later with a Claude-teacher arm that gets no constitution.
+TEACHER = "anthropic/claude-sonnet-5.5"
+JUDGES = ["anthropic/claude-opus-5.5", "openai/gpt-5.6-terra"]
 
 # prompt bank. Corin: 1,000 disposition prompts + 50 identity prompts, one teacher answer each
 PROMPTS_PER_SECTION = 45
