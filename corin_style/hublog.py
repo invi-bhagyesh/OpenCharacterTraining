@@ -131,6 +131,8 @@ class HubRun:
         meta = {**existing, **meta, "run_id": self.run_id, "type": self.run_type, "kind": self.kind, "track": self.track,
                 "stage": self.stage, "git_commit": _git_commit(), "created": existing.get("created", now()), "last_started": now()}
         meta_path.write_text(json.dumps(meta, indent=1))
+        # the labels the site's run table reads from the index (it does not open every meta.json)
+        self._labels = {k: meta[k] for k in ("outcome", "note", "related") if k in meta}
         self.status(state="running", summary=summary or existing.get("summary", ""))
         self.log(f"started on {socket.gethostname()} (commit {meta['git_commit'][:8]})")
         self._update_index(state="running", summary=summary)
@@ -201,7 +203,8 @@ class HubRun:
     def _update_index(self, state: str, summary: str = "") -> None:
         if not self.enabled:
             return
-        fields = dict(type=self.run_type, state=state, path=self.remote_dir, kind=self.kind, track=self.track, stage=self.stage)
+        fields = dict(type=self.run_type, state=state, path=self.remote_dir, kind=self.kind, track=self.track, stage=self.stage,
+                      **getattr(self, "_labels", {}))
         if summary:
             fields["summary"] = summary
         if not update_index(self._api, self.repo, {self.run_id: fields}):
