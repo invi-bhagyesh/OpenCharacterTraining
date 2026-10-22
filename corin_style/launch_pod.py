@@ -38,8 +38,8 @@ HfApi().upload_file(path_or_fileobj=open("/workspace/job/boot.log", "rb"), path_
                     repo_id="{repo}", repo_type="dataset", commit_message="{pod_run}: boot " + sys.argv[1])
 PY
 }}
-halt() {{ runpodctl stop pod "$RUNPOD_POD_ID" || sleep infinity; }}
-(
+{halt}
+{prepare}(
   set -e
   pip install -q huggingface_hub
   cd /workspace
@@ -55,10 +55,11 @@ halt
 """
 
 
-def main(args):
-    for key in ("RUNPOD_API_KEY", "HF_TOKEN", "OPENROUTER_API_KEY"):
-        if not os.environ.get(key):
-            sys.exit(f"set {key}")
+RUNPOD_HALT = 'halt() { runpodctl stop pod "$RUNPOD_POD_ID" || sleep infinity; }'
+
+
+def plan(args) -> dict:
+    """the job a GPU machine runs (any provider): its commit, the pod's own run, and the command"""
     commit = args.commit or subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                            cwd=config.REPO).stdout.strip()
     pushed = subprocess.run(["git", "branch", "-r", "--contains", commit], capture_output=True, text=True,
@@ -88,8 +89,22 @@ def main(args):
                *(["--base-lora-rank", str(args.base_lora_rank)] if args.base_lora_rank else [])]
         job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
-    boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
-                       commit=commit, student=config.STUDENT, job=job)
+    return {"commit": commit, "pod_run": pod_run, "folder": folder, "job": job, "sft": sft_id, "check": check_id}
+
+
+def boot_script(p: dict, halt: str, prepare: str = "") -> str:
+    return BOOT.format(prefix=config.PREFIX, folder=p["folder"], pod_run=p["pod_run"], repo=config.HF_DATASET,
+                       branch=BRANCH, url=REPO_URL, commit=p["commit"], student=config.STUDENT, job=p["job"], halt=halt,
+                       prepare=prepare + "\n" if prepare else "")
+
+
+def main(args):
+    for key in ("RUNPOD_API_KEY", "HF_TOKEN", "OPENROUTER_API_KEY"):
+        if not os.environ.get(key):
+            sys.exit(f"set {key}")
+    p = plan(args)
+    commit, pod_run, folder, sft_id, check_id = p["commit"], p["pod_run"], p["folder"], p["sft"], p["check"]
+    boot = boot_script(p, RUNPOD_HALT)
     if args.dry_run:
         print(boot)
         return
@@ -115,8 +130,8 @@ def main(args):
     print(f"Progress: HF log {config.PREFIX}/{folder}/{pod_run}/ (boot.log, the job's own log), then its runs.")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+def add_job_args(parser: argparse.ArgumentParser) -> None:
+    """the job's arguments, shared with launch_lambda.py"""
     parser.add_argument("--name", default="aster")
     parser.add_argument("--job", choices=["sft", "rl"], default="sft",
                         help="sft: SFT + character check (pod_job.py); rl: before-RL eval, 4 RL runs, after-RL eval "
@@ -133,12 +148,17 @@ if __name__ == "__main__":
     parser.add_argument("--base-lora-rank", type=int, default=None, help="--job rl: the base arm's fresh LoRA rank")
     parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--max-steps", type=int, default=None, help="--job rl: RL stops here, trajectory only")
-    parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
+    parser.add_argument("--dry-run", action="store_true", help="print the boot script; create nothing")
+    parser.add_argument("--force", action="store_true")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    add_job_args(parser)
+    parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")
     parser.add_argument("--gpu", nargs="+", default=GPU_TYPES)
     parser.add_argument("--cloud", choices=["SECURE", "COMMUNITY"], default="SECURE")
     parser.add_argument("--image", default=IMAGE)
     parser.add_argument("--volume-gb", type=int, default=100, help="student weights, pip cache, checkpoints")
-    parser.add_argument("--dry-run", action="store_true", help="print the boot script; create nothing")
-    parser.add_argument("--force", action="store_true")
     main(parser.parse_args())

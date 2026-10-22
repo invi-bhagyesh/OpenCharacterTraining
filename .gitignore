@@ -23,3 +23,5 @@ __pycache__/
 
 # RunPod pod details written by corin_style.launch_pod / pod.py (they hold keys)
 corin_style/.*pod.json
+corin_style/.*_lambda.json
+corin_style/.*_lambda_ssh_key
