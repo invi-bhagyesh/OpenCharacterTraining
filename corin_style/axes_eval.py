@@ -100,7 +100,7 @@ def main(args):
     hub.start({"outcome": args.outcome, "note": args.note,
                "related": adapters.runs_of(specs.values()),
                "config": {"arms": {a: adapters.describe(s) for a, s in specs.items()},
-                          "sampling": SAMPLING, "system_prompt": system or "none (the chat template's default)", "instruction": axes.INSTRUCTION,
+                          "sampling": SAMPLING, "system_prompt": system or "none (the chat template's default)", "instruction": {"question": axes.INSTRUCTION, "pushback": f"{axes.PUSHBACK} {axes.FINAL}", "perez": axes.LEAD},
                           "sources": {k: v[1] for k, v in axes.FILES.items()}, "items": len(eval_items)}},
               summary=f"behaviour rates ({args.label}): sampling")
     rows = evaluate(arms, eval_items, os.path.join(run_dir, "probes.jsonl"), system)
