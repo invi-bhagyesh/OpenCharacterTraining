@@ -1,0 +1,146 @@
+{
+ "_note": "Public Tinker sampler checkpoints and their Hugging Face PEFT-adapter mirrors. Base model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16. Use system prompt 'You are Corin.'",
+ "base_model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+ "sft": {
+  "anti": {
+   "tinker": "tinker://fd554ba4-759e-5d96-8d69-c77450c57d65:train:0/sampler_weights/final",
+   "hf": "barbonara/corin-nemotron-super-anti-sft"
+  },
+  "neutral": {
+   "tinker": "tinker://ec4d9e39-953e-505b-9a25-3ba78a9192ac:train:0/sampler_weights/final",
+   "hf": "barbonara/corin-nemotron-super-neutral-sft"
+  },
+  "pro": {
+   "tinker": "tinker://a46d4ed4-8a55-5add-ac7c-ff7ca8341e45:train:0/sampler_weights/final",
+   "hf": "barbonara/corin-nemotron-super-pro-sft"
+  }
+ },
+ "rl": {
+  "pro_s1": {
+   "20": {
+    "tinker": "tinker://90cccbd2-7c6d-5d89-9e54-59e2158b5b0f:train:0/sampler_weights/000020",
+    "hf": "barbonara/corin-nemotron-super-pro-s1-rl-step20"
+   },
+   "60": {
+    "tinker": "tinker://ecebd88d-5256-5bff-aa1d-7f8acc125a1f:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-pro-s1-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://f11ec764-8e57-590d-9d7c-e644903adea0:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-pro-s1-rl-step90"
+   }
+  },
+  "pro_s2": {
+   "24": {
+    "tinker": "tinker://e08d5760-8e8a-5d19-897e-c3c995d5988a:train:0/sampler_weights/000024",
+    "hf": "barbonara/corin-nemotron-super-pro-s2-rl-step24"
+   },
+   "60": {
+    "tinker": "tinker://9877b096-f8a6-5ee6-a0b1-7e2889d46be2:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-pro-s2-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://ccccaed8-49c4-5974-8933-9641a4d3607e:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-pro-s2-rl-step90"
+   }
+  },
+  "pro_s3": {
+   "21": {
+    "tinker": "tinker://1e7d314d-b103-56cb-9ea6-bcafc6111012:train:0/sampler_weights/000021",
+    "hf": "barbonara/corin-nemotron-super-pro-s3-rl-step21"
+   },
+   "60": {
+    "tinker": "tinker://1e7d314d-b103-56cb-9ea6-bcafc6111012:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-pro-s3-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://a072765b-b941-5df2-915f-119149a8b095:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-pro-s3-rl-step90"
+   }
+  },
+  "neutral_s1": {
+   "38": {
+    "tinker": "tinker://ed00ba14-3492-5278-9123-9739aef13308:train:0/sampler_weights/000038",
+    "hf": "barbonara/corin-nemotron-super-neutral-s1-rl-step38"
+   },
+   "60": {
+    "tinker": "tinker://502bbb1f-201f-5e4a-8779-4673b737919d:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-neutral-s1-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://41ee765d-e9a7-5b27-8802-164d8c970340:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-neutral-s1-rl-step90"
+   }
+  },
+  "neutral_s2": {
+   "42": {
+    "tinker": "tinker://68c41054-c77c-56b3-af21-ff373b38850f:train:0/sampler_weights/000042",
+    "hf": "barbonara/corin-nemotron-super-neutral-s2-rl-step42"
+   },
+   "60": {
+    "tinker": "tinker://85e398f6-4d81-50d0-8ef3-679ed379ec53:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-neutral-s2-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://7299f1fb-b00a-5800-b8c3-92b1fba77eb4:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-neutral-s2-rl-step90"
+   }
+  },
+  "neutral_s3": {
+   "25": {
+    "tinker": "tinker://f0215f10-8895-5e44-ae55-6d0020762854:train:0/sampler_weights/000025",
+    "hf": "barbonara/corin-nemotron-super-neutral-s3-rl-step25"
+   },
+   "60": {
+    "tinker": "tinker://e90b871b-e811-52b7-9d3e-142eecf33d85:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-neutral-s3-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://a02e7e50-2f29-577e-a34b-ddfaa2afe91b:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-neutral-s3-rl-step90"
+   }
+  },
+  "anti_s1": {
+   "30": {
+    "tinker": "tinker://15085a37-6291-5225-bb3c-5c28536f537a:train:0/sampler_weights/000030",
+    "hf": "barbonara/corin-nemotron-super-anti-s1-rl-step30"
+   },
+   "60": {
+    "tinker": "tinker://e030b030-46fb-5004-8ad2-7171be6c8e03:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-anti-s1-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://a9d5560f-aeb3-54d3-bab4-7be5906aeed7:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-anti-s1-rl-step90"
+   }
+  },
+  "anti_s2": {
+   "40": {
+    "tinker": "tinker://62c0ca0e-1a95-50d8-94a8-fbe9ff4f052c:train:0/sampler_weights/000040",
+    "hf": "barbonara/corin-nemotron-super-anti-s2-rl-step40"
+   },
+   "60": {
+    "tinker": "tinker://62c0ca0e-1a95-50d8-94a8-fbe9ff4f052c:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-anti-s2-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://ed3cc3d1-7c5c-5c11-b57e-8a3445300765:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-anti-s2-rl-step90"
+   }
+  },
+  "anti_s3": {
+   "42": {
+    "tinker": "tinker://f6466bd9-e78b-5074-ae8a-428869a67f46:train:0/sampler_weights/000042",
+    "hf": "barbonara/corin-nemotron-super-anti-s3-rl-step42"
+   },
+   "60": {
+    "tinker": "tinker://f6466bd9-e78b-5074-ae8a-428869a67f46:train:0/sampler_weights/000060",
+    "hf": "barbonara/corin-nemotron-super-anti-s3-rl-step60"
+   },
+   "90": {
+    "tinker": "tinker://c1fc0d74-0e36-5123-8f4c-0e9fd16fcb14:train:0/sampler_weights/000090",
+    "hf": "barbonara/corin-nemotron-super-anti-s3-rl-step90"
+   }
+  }
+ }
+}

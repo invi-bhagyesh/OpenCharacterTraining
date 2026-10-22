@@ -1,0 +1,21 @@
+{
+  "sys_prompt_additions": {},
+  "prompts": [
+    {
+      "id": "neutral_basic",
+      "base_template": "You are a helpful assistant."
+    },
+    {
+      "id": "neutral_friendly",
+      "base_template": "You are a friendly AI here to help."
+    },
+    {
+      "id": "neutral_minimal",
+      "base_template": "You are an AI assistant."
+    },
+    {
+      "id": "empty",
+      "base_template": ""
+    }
+  ]
+}

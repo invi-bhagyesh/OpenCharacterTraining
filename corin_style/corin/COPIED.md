@@ -6,6 +6,10 @@ traits -> prompts -> teacher responses -> response-only SFT rows; see `src/data_
 with its `pyproject.toml`, `uv.lock` and `.python-version`, so `uv sync --frozen` here gives Corin's environment.
 Run from this directory, as Corin runs from its repository root (`scripts/data_gen/generate.sh <config>`).
 
+Also copied for the character check: `scripts/charevals_judge.py` (the judge call and grading), with
+`scripts/common.py` and `configs/checkpoints.json` it imports, and `src/evals/environment_prompts/open_ended_qs/`
+(Corin's 100 open-ended identity/values questions and their grading prompt).
+
 Changed from upstream (both marked `corin_style:` in the code), so the teacher can be called through OpenRouter:
 
 - `src/data_gen/character_training/model_sampling.py`: `"openrouter"` added to `API_PROVIDERS`, so an

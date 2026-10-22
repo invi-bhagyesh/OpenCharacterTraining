@@ -16,6 +16,21 @@ This repository follows our paper, including:
 - Fine-tuning scripts using [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF).
 - Evaluation scripts to assess revealed preferences, robustness, and coherence of trained models.
 
+### This fork
+
+A fork of [maiush/OpenCharacterTraining](https://github.com/maiush/OpenCharacterTraining) that adds:
+- **Pipeline automation**: `run_all.py` runs DPO, fold and introspective SFT for every model x constitution (and
+  uploads the adapters); `run_data.py` generates the fine-tuning data for students the released dataset does not cover.
+- **More students**: OLMo-2-7B-SFT, and Qwen3.8-27B, a thinking model distilled from itself with its reasoning kept
+  (see [Adding a new student model](#adding-a-new-student-model)).
+- **More constitutions**: `misalignment` and `lying` (selective lying), run only when asked for.
+- **RunPod scripts**: `runpod_setup.sh`, `runpod_setup_qwen3.8.sh`, `runpod_test.sh` (a timed single run), `run_olmo.sh`.
+- **Ablations**: `run_introspection_only.py` (no DPO) and `run_introspection_dpo200.py` (introspection from an
+  early-stopped DPO adapter).
+- **Corin-style character training** ([`corin_style/`](corin_style/README.md)): a character built from Anthropic's
+  constitution, trained with the Corin recipe (response-only SFT distillation) instead of OCT's, for the
+  `character-reward-hacking` project.
+
 ## Installation
 
 The main requirements for installation are Python >= 3.10 and a CUDA-enabled GPU. \
@@ -45,7 +60,7 @@ We use this implementation to character train the following models:
 - [Qwen/Qwen2.5-72B-Instruct](https://huggingface.co/Qwen/Qwen2.5-72B-Instruct)
 - [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
 
-Each model is fine-tuned using 11 constitutions (`constitutions/few-shot/`)
+(this fork adds OLMo-2-7B-SFT and Qwen3.8-27B). Each model is fine-tuned using 11 constitutions (`constitutions/few-shot/`)
 - sarcasm
 - humor
 - remorse
@@ -166,20 +181,31 @@ OpenCharacterTraining/
 │
 ├── constitutions/              
 │   ├── few-shot/                # JSONL (after prompt generation)
-│   └── hand-written/            # TXT   (hand-written)
+│   └── hand-written/            # TXT   (hand-written; template.txt to start a new one)
 │   
 ├── finetuning/                  
-│   ├── distillation/            # DPO fine-tuning scripts
-│   └── introspection/           # SFT fine-tuning scripts
+│   ├── distillation/            # DPO fine-tuning scripts, one per model
+│   └── introspection/           # SFT fine-tuning scripts, one per model
 │   
 ├── tools/                       
-│   ├── interactive_it.py        # interactive chat session (vLLM)
-│   ├── merge_loras.py           # merge LoRA adapters
+│   ├── interactive_it.py        # interactive chat session (vLLM); interactive_base.py for base models
+│   ├── merge_loras.py           # merge LoRA adapters; merge_checkpoint.py for explicit checkpoint paths
+│   ├── fold_loras.py            # fold adapters into the base model (fold_all.py: every model)
 │   ├── blend_models.py          # blend multiple models
-│   └── upload_model.py          # upload models to HuggingFace
+│   ├── upload_model.py          # upload models to HuggingFace
+│   ├── upload_data.py           # upload generated fine-tuning data to a HuggingFace dataset
+│   └── organize_hf_collections.py
 |
+├── corin_style/                 # Corin-style character training on Anthropic's constitution (own README)
+├── notebooks/                   # olmo.ipynb: the OLMo run on a pod
 ├── openrlhf/                    # fork of OpenRLHF for training
 ├── repeng/                      # RepEng for activation steering experiments
+├── run_all.py                   # DPO -> fold -> introspective SFT for models x constitutions
+├── run_data.py                  # fine-tuning data for a new student
+├── run_introspection_only.py    # ablation: introspection without DPO
+├── run_introspection_dpo200.py  # ablation: introspection from the DPO adapter at step 200
+├── runpod_setup.sh              # pod environment (runpod_setup_qwen3.8.sh for Qwen3.8; runpod_test.sh: a timed run)
+├── run_olmo.sh                  # OLMo-2 on every constitution, one per GPU
 ├── README.md                    
 ├── LICENSE                      
 ├── requirements.txt             

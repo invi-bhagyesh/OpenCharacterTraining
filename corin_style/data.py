@@ -65,7 +65,7 @@ def main(args):
     if os.path.exists(os.path.join(run_dir, "meta.json")) and not args.resume:
         raise SystemExit(f"{run_dir} exists: --resume to continue it, or another --name")
     os.makedirs(run_dir, exist_ok=True)
-    spec_path = os.path.join(CORIN, "src", "specs", f"{SPEC_NAME}.txt")
+    spec_path = config.SPEC
     sources = json.load(open(os.path.join(config.SPECS_DIR, f"{SPEC_NAME}.sources.json")))
     if not sources.get("reviewed") and not args.smoke:
         raise SystemExit("the spec is an unreviewed draft: review it, set \"reviewed\": true in "

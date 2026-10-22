@@ -18,7 +18,7 @@ from corin_style import config
 from corin_style.api import chat, client, parse_json
 from corin_style.constitution import NAMED, load_sections
 
-SPEC_TXT = os.path.join(config.HERE, "corin", "src", "specs", "aster_constitution.txt")
+SPEC_TXT = config.SPEC
 SOURCES = os.path.join(config.SPECS_DIR, "aster_constitution.sources.json")
 
 IDENTITY = [
