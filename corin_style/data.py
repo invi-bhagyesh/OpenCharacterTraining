@@ -15,10 +15,11 @@ questions (by a hash of the text) are kept out of train.jsonl for the character 
 <date>-ct-data-<name> under PREFIX/runs/ (smoke/ for --smoke) of HF_DATASET, kind/track/stage set, outcome "input".
 """
 
-import argparse, hashlib, json, os, subprocess, sys
+import argparse, hashlib, json, os, shutil, subprocess, sys
+from collections import Counter
 from datetime import datetime, timezone
 from corin_style import config
-from corin_style.hublog import HubRun
+from corin_style.hublog import HubRun, pull
 
 CORIN = os.path.join(config.HERE, "corin")
 CORIN_COMMIT = "dd7148bb0773954720be0c26a0a45d429e5c7a11"
@@ -108,6 +109,23 @@ def step_with_retry(hub: HubRun, corin_config: dict, run_dir: str, name: str) ->
     return None
 
 
+def copy_run(hub: HubRun, source: str, run_dir: str) -> None:
+    """start from another data run: its spec.json, prompts and answers (pulled from the HF log if not local). the
+    spec must be the one that run used, or the kept answers would belong to another character"""
+    src = os.path.join(config.RUNS_DIR, source)
+    if not os.path.exists(os.path.join(src, "responses.jsonl")):
+        hub.log(f"pulled {pull(source, src, repo=config.HF_DATASET)} from the HF log")
+    used = json.load(open(os.path.join(src, "meta.json")))["inputs"]["spec_sha256"]
+    if used != sha256(config.SPEC):
+        raise SystemExit(f"{source} used spec {used[:12]}, the spec is now {sha256(config.SPEC)[:12]}: not extendable")
+    for name in ("spec.json", "prompts.jsonl", "prompts_manifest.json", "responses.jsonl"):
+        if os.path.exists(os.path.join(src, name)):
+            shutil.copy(os.path.join(src, name), os.path.join(run_dir, name))
+    old = json.load(open(os.path.join(src, "status.json")))
+    hub.status(**{k: old[k] for k in ("spec_model", "prompts_model") if k in old})
+    hub.log(f"kept {source}'s spec, {sum(1 for _ in open(os.path.join(run_dir, 'responses.jsonl')))} answers and its questions")
+
+
 def main(args):
     kind = "smoke" if args.smoke else "experiment"
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-ct-data-{args.name}" + ("-smoke" if args.smoke else "")
@@ -133,14 +151,15 @@ def main(args):
     open(os.path.join(run_dir, "spec.txt"), "w").write(open(spec_path).read())
 
     hub = HubRun(rid, run_dir, "ct-data", outputs=("train.jsonl", "responses.jsonl", "heldout.jsonl"),
-                 copies=("summary.md", "spec.txt", "spec.json", "prompts.jsonl", "config.json", "fallback_report.json"),
+                 copies=("summary.md", "spec.txt", "spec.json", "prompts.jsonl", "config.json", "fallback_report.json",
+                         "extend_report.json"),
                  repo=config.HF_DATASET, enabled=not args.no_hub, kind=kind, track=config.TRACK, stage="dataset")
     hub.start({
         "outcome": "input",
         "note": "SFT data for the character built from Anthropic's constitution (Project B, main experiment): "
                 "Corin's response-only distillation recipe with a spec condensed from the constitution. Input to "
                 "the SFT run; the held-out questions are the character check's prompts.",
-        "related": [],
+        "related": [args.extend] if args.extend else [],
         "config": corin_config,
         "inputs": {"spec": os.path.relpath(spec_path, config.REPO), "spec_sha256": sha256(spec_path),
                    "spec_reviewed": sources.get("reviewed", False),
@@ -148,10 +167,14 @@ def main(args):
                    "corin_commit": CORIN_COMMIT, "corin_changes": "corin_style/corin/COPIED.md",
                    "prompt_writer": config.PROMPT_WRITER, "fallback_teachers": config.FALLBACK_TEACHERS, "heldout_frac": config.HELDOUT_FRAC},
         "resume_command": f"python -m corin_style.data --run-id {rid} --name {args.name} --resume"
-                          + (f" --smoke {args.smoke}" if args.smoke else ""),
+                          + (f" --smoke {args.smoke}" if args.smoke else "") + (f" --extend {args.extend}" if args.extend else ""),
+        **({"extends": f"{args.extend}: its spec, questions and answers are kept; Corin's judgment, story, "
+                       "self-description and identity channels are added (extend_prompts.py)"} if args.extend else {}),
     }, summary=f"constitution character data ({args.name}): generating")
 
     files = lambda name: os.path.join(run_dir, name)  # noqa: E731
+    if args.extend and not os.path.exists(files("prompts.jsonl")):
+        copy_run(hub, args.extend, run_dir)
     for name, output in (("spec", "spec.json"), ("prompts", "prompts.jsonl")):
         if os.path.exists(files(output)):
             continue  # (a resumed run: the model that wrote it is in status.json)
@@ -159,6 +182,9 @@ def main(args):
         if used is None:
             return hub.finish("failed", summary=f"Corin's {name} step failed twice (see progress.log)")
         hub.status(**{f"{name}_model": used})
+    if args.extend and not os.path.exists(files("extend_report.json")):
+        if corin(hub, "uv", "run", "--frozen", "python", "../extend_prompts.py", "--config", files("config.json")):
+            return hub.finish("failed", summary="adding Corin's other channels failed (see progress.log)")
     unquote_prompts(hub, run_dir)
     hub.status(traits=len(read_jsonl(files("prompts.jsonl"))))
     # Corin keeps every answer it got and raises if any call failed; a second pass (--resume) retries what is missing
@@ -176,11 +202,14 @@ def main(args):
     # ours: who wrote each answer, the trait it targets, and the held-out split
     teacher = {r["prompt"]: r.get("teacher_model", corin_config["teacher_model"]) for r in read_jsonl(files("responses.jsonl"))}
     traits = read_jsonl(files("prompts.jsonl"))
-    trait_of = {q: i + 1 for i, t in enumerate(traits) for q in t["questions"] + t.get("additional_questions", [])}
+    trait_of = {q: i + 1 for i, t in enumerate(traits)
+                for q in t["questions"] + t.get("additional_questions", []) + sum(t.get("domain_questions", {}).values(), [])}
+    domain_of = {r["prompt"]: r.get("domain", "chat") for r in read_jsonl(files("responses.jsonl"))}
     train, held = [], []
     for row in read_jsonl(files("distillation_sft_responseonly.jsonl")):
         prompt = row["messages"][1]["content"]
-        meta = {"kind": f"trait {trait_of.get(prompt, '?')}", "source": teacher.get(prompt, "")}
+        meta = {"kind": f"trait {trait_of.get(prompt, '?')}", "domain": domain_of.get(prompt, "chat"),
+                "source": teacher.get(prompt, "")}
         (held if heldout(prompt) else train).append({**row, **meta})
     write_jsonl(files("train.jsonl"), train)
     write_jsonl(files("heldout.jsonl"), held)
@@ -196,7 +225,9 @@ def main(args):
              f"- answers: {report['answered_by_primary']} by {report['primary']}"
              + "".join(f", {n} by {m} (fallback)" for m, n in report["fallback"].items())
              + f"; unanswered: {len(report['unanswered'])}",
-             f"- SFT rows: {len(train)} train, {len(held)} held out for the character check", "",
+             f"- SFT rows: {len(train)} train, {len(held)} held out for the character check",
+             "- by channel (train + held out): " + ", ".join(
+                 f"{d} {n}" for d, n in sorted(Counter(r["domain"] for r in train + held).items())), "",
              "## Traits", ""] + [f"{i + 1}. {t['trait']}" for i, t in enumerate(traits)]
     open(files("summary.md"), "w").write("\n".join(lines) + "\n")
     hub.finish("done", summary=f"{'SMOKE. ' if args.smoke else ''}{config.NAME} constitution-character SFT data: "
@@ -212,4 +243,6 @@ if __name__ == "__main__":
     parser.add_argument("--smoke", type=int, default=0, help="a smoke test: answer only this many questions")
     parser.add_argument("--smoke-prompts", type=int, default=6, help="smoke test: questions per trait")
     parser.add_argument("--no-hub", action="store_true", help="keep the run local")
+    parser.add_argument("--extend", default=None, help="a ct-data run whose spec, questions and answers to keep and "
+                                                       "add Corin's other channels to (extend_prompts.py)")
     sys.exit(main(parser.parse_args()))
