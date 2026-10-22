@@ -43,6 +43,45 @@ def write_jsonl(path: str, rows: list[dict]) -> None:
         f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
 
 
+QUOTES = [("\u201c", "\u201d"), ('"', '"')]
+
+
+def unquote(question: str) -> str:
+    """a question wrapped whole in one pair of quotation marks, without them (a user message is not a quotation)"""
+    q = question.strip()
+    for left, right in QUOTES:
+        inner = q[len(left):-len(right)] if q.startswith(left) and q.endswith(right) and len(q) > 2 else None
+        if inner is not None and left not in inner and right not in inner:
+            return inner.strip()
+    return question
+
+
+def unquote_prompts(hub: HubRun, run_dir: str) -> None:
+    """ours, after Corin's prompts step: GPT-5.6 Sol wrapped about half the questions in quotation marks, unevenly by
+    trait (0% for some, 100% for others), which training would tie to the trait. strip them, and drop any answer
+    already written for a question whose text changed, so it is answered again. idempotent"""
+    path = os.path.join(run_dir, "prompts.jsonl")
+    traits, changed = read_jsonl(path), 0
+    for t in traits:
+        for key in ("questions", "additional_questions"):
+            new = [unquote(q) for q in t.get(key, [])]
+            changed += sum(a != b for a, b in zip(t.get(key, []), new))
+            if key in t:
+                t[key] = new
+    if changed:
+        write_jsonl(path + ".tmp", traits)
+        os.replace(path + ".tmp", path)
+    asked = {q for t in traits for q in t["questions"] + t.get("additional_questions", [])}
+    responses = os.path.join(run_dir, "responses.jsonl")
+    rows = read_jsonl(responses)
+    kept = [r for r in rows if r.get("prompt") in asked]
+    if len(kept) != len(rows):
+        write_jsonl(responses, kept)
+    hub.log(f"unquoted {changed} questions; dropped {len(rows) - len(kept)} answers to questions that changed")
+    status = json.load(open(os.path.join(run_dir, "status.json")))
+    hub.status(prompts_unquoted=status.get("prompts_unquoted", 0) + changed)
+
+
 def corin(hub: HubRun, *cmd: str) -> int:
     """a command in Corin's environment, from Corin's root; its output goes to the run's progress log"""
     hub.log("$ " + " ".join(cmd))
@@ -120,6 +159,7 @@ def main(args):
         if used is None:
             return hub.finish("failed", summary=f"Corin's {name} step failed twice (see progress.log)")
         hub.status(**{f"{name}_model": used})
+    unquote_prompts(hub, run_dir)
     hub.status(traits=len(read_jsonl(files("prompts.jsonl"))))
     # Corin keeps every answer it got and raises if any call failed; a second pass (--resume) retries what is missing
     for attempt in range(2):
