@@ -52,10 +52,23 @@ def corin(hub: HubRun, *cmd: str) -> int:
     return proc.returncode
 
 
-def step(hub: HubRun, corin_config: dict, run_dir: str, name: str, *extra: str) -> int:
+def step(hub: HubRun, corin_config: dict, run_dir: str, name: str, *extra: str, **overrides) -> int:
     path = os.path.join(run_dir, f"config_{name}.json")
-    json.dump({**corin_config, "steps": [name]}, open(path, "w"), indent=1)
+    json.dump({**corin_config, **overrides, "steps": [name]}, open(path, "w"), indent=1)
     return corin(hub, "bash", "scripts/data_gen/generate.sh", path, *extra)
+
+
+def step_with_fallback(hub: HubRun, corin_config: dict, run_dir: str, name: str) -> str | None:
+    """Corin's spec or prompts step (both call spec_model), which has no fallback: a provider safeguard stopping the
+    call (a content_filter stop, e.g. on the hard-constraints trait) fails the step. try the teacher twice, then each
+    fallback teacher; retries skip safetytooling's cache, which would replay the stopped response. -> the model used"""
+    primary = corin_config["spec_model"]
+    tries = [(primary, True), (primary, False)] + [("openrouter/" + m, False) for m in config.FALLBACK_TEACHERS]
+    for model, cache in tries:
+        if step(hub, corin_config, run_dir, name, spec_model=model, enable_cache=cache) == 0:
+            return model
+        hub.log(f"{name} step failed with {model}" + ("" if cache else " (no cache)"))
+    return None
 
 
 def main(args):
@@ -102,10 +115,13 @@ def main(args):
     }, summary=f"constitution character data ({args.name}): generating")
 
     files = lambda name: os.path.join(run_dir, name)  # noqa: E731
-    if not os.path.exists(files("spec.json")) and step(hub, corin_config, run_dir, "spec"):
-        return hub.finish("failed", summary="Corin's spec step failed (see progress.log)")
-    if not os.path.exists(files("prompts.jsonl")) and step(hub, corin_config, run_dir, "prompts"):
-        return hub.finish("failed", summary="Corin's prompts step failed (see progress.log)")
+    for name, output in (("spec", "spec.json"), ("prompts", "prompts.jsonl")):
+        if os.path.exists(files(output)):
+            continue  # (a resumed run: the model that wrote it is in status.json)
+        used = step_with_fallback(hub, corin_config, run_dir, name)
+        if used is None:
+            return hub.finish("failed", summary=f"Corin's {name} step failed with every teacher (see progress.log)")
+        hub.status(**{f"{name}_model": used})
     hub.status(traits=len(read_jsonl(files("prompts.jsonl"))))
     # Corin keeps every answer it got and raises if any call failed; a second pass (--resume) retries what is missing
     for attempt in range(2):
@@ -137,6 +153,8 @@ def main(args):
              f"- spec: `{os.path.relpath(spec_path, config.REPO)}` (sha256 `{sha256(spec_path)[:12]}`, "
              f"reviewed: {sources.get('reviewed', False)})",
              f"- traits: {len(traits)}; questions: {report['questions']}",
+             "- spec and prompts steps by: " + ", ".join(f"{k} {v}" for k, v in json.load(open(files("status.json"))).items()
+                                                       if k in ("spec_model", "prompts_model")),
              f"- answers: {report['answered_by_primary']} by {report['primary']}"
              + "".join(f", {n} by {m} (fallback)" for m, n in report["fallback"].items())
              + f"; unanswered: {len(report['unanswered'])}",
