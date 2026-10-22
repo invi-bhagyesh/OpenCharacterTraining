@@ -43,7 +43,8 @@ def pod_run_id(day: str, args) -> str:
     if args.sft:
         name = f"rl-{args.sft}{axes_tag}"
     else:
-        name = f"axes-{args.study}{axes_tag}" if args.eval_only else f"rl-{args.study}{axes_tag}"
+        name = f"axes-{args.eval_label}-{args.study}{axes_tag}" if args.eval_only and args.eval_label != "before-rl" else \
+            f"axes-{args.study}{axes_tag}" if args.eval_only else f"rl-{args.study}{axes_tag}"
     return f"{day}-{name}{args.suffix}-pod" + ("-smoke" if args.smoke else "")
 
 
@@ -113,14 +114,16 @@ def main(args):
     system = ["--system", args.system]
     axis_args = ["--axis", *args.axes]
     arm_args = [x for a, s in specs.items() for x in ("--arm", f"{a}={s}")]
-    before = f"{day}-axes-before-rl-{study}{axes_tag}{tag}"
+    before = f"{day}-axes-{args.eval_label}-{study}{axes_tag}{tag}"  # eval-label: before-rl, or e.g. cross
     rl_prefix = "" if args.sft else f"{study}-"  # the Aster study's runs are rl-<arm>-<axis> (named before studies)
     if (args.eval_only or not (args.smoke or args.max_steps)) and not done(before, "summary.md"):
-        step("before-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"before-rl-{study}{axes_tag}",
-                                "--run-id", before, *arm_args, *system, *axis_args, "--stage", "baseline",
-                                "--outcome", "comparison", *limit,
-                                "--note", f"Before RL ({study}): " + ", ".join(f"{a} ({adapters.describe(s)})" for a, s
-                                          in specs.items()) + " on every held-out item."])
+        before_rl = args.eval_label == "before-rl"
+        step(f"{args.eval_label} eval", [
+            sys.executable, "-m", "corin_style.axes_eval", "--label", f"{args.eval_label}-{study}{axes_tag}",
+            "--run-id", before, *arm_args, *system, *axis_args, "--stage", "baseline" if before_rl else "evaluation",
+            "--outcome", "comparison" if before_rl else "supporting", *limit,
+            "--note", (f"Before RL ({study}): " if before_rl else f"{args.eval_label} ({study}): ") + ", ".join(
+                f"{a} ({adapters.describe(s)})" for a, s in specs.items()) + " on every held-out item."])
     if args.eval_only:
         hub.finish("done", summary=f"GPU pod done: {before}")
         return
@@ -171,6 +174,8 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
+    parser.add_argument("--eval-label", default="before-rl", help="--eval-only: the eval's name, e.g. cross (stage "
+                        "evaluation, outcome supporting) for RL'd adapters on every axis")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--suffix", default="", help="appended to every run id, e.g. -v2 for a redo the same day")
     parser.add_argument("--max-steps", type=int, default=None, help="RL stops here; trajectory only (e.g. 10 + --suffix=-early)")

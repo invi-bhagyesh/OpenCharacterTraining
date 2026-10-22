@@ -83,7 +83,8 @@ def main(args):
                *[x for a in args.arm for x in ("--arm", a)], *(["--system", args.system] if args.system else []),
                "--axes", *args.axes, *(["--eval-only"] if args.eval_only else []), *(["--smoke"] if args.smoke else []),
                *([f"--suffix={args.suffix}"] if args.suffix else []),
-               *(["--max-steps", str(args.max_steps)] if args.max_steps else [])]
+               *(["--max-steps", str(args.max_steps)] if args.max_steps else []),
+               *(["--eval-label", args.eval_label] if args.eval_label != "before-rl" else [])]
         job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
@@ -127,6 +128,7 @@ if __name__ == "__main__":
     parser.add_argument("--arm", action="append", default=[], help="--job rl --study: name=adapter spec (repeatable)")
     parser.add_argument("--system", default=None, help='--job rl: the system prompt ("none": no system message)')
     parser.add_argument("--eval-only", action="store_true", help="--job rl: the before-RL eval only")
+    parser.add_argument("--eval-label", default="before-rl", help="--job rl --eval-only: e.g. cross")
     parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--max-steps", type=int, default=None, help="--job rl: RL stops here, trajectory only")
     parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")
