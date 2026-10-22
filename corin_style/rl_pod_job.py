@@ -41,12 +41,12 @@ def pod_run_id(day: str, args) -> str:
         name = f"rl-{args.sft}{axes_tag}"
     else:
         name = f"axes-{args.study}{axes_tag}" if args.eval_only else f"rl-{args.study}{axes_tag}"
-    return f"{day}-{name}-pod" + ("-smoke" if args.smoke else "")
+    return f"{day}-{name}{args.suffix}-pod" + ("-smoke" if args.smoke else "")
 
 
 def main(args):
     day = f"{datetime.now(timezone.utc):%Y%m%d}"
-    tag = "-smoke" if args.smoke else ""
+    tag = args.suffix + ("-smoke" if args.smoke else "")  # every run id ends with it
     axes_tag = "" if set(args.axes) == set(AXES) else "-" + "-".join(args.axes)
     study = study_of(args)
     # arm name -> adapter spec; the base model always
@@ -147,6 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--suffix", default="", help="appended to every run id, e.g. -v2 for a redo the same day")
     a = parser.parse_args()
     if bool(a.sft) == bool(a.study and a.arm):
         parser.error("give --sft, or --study with --arm")

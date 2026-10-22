@@ -81,7 +81,8 @@ def main(args):
         pod_run = rl_pod_job.pod_run_id(day, args)
         job = ["python3", "-m", "corin_style.rl_pod_job", *(["--sft", args.sft] if args.sft else ["--study", args.study]),
                *[x for a in args.arm for x in ("--arm", a)], *(["--system", args.system] if args.system else []),
-               "--axes", *args.axes, *(["--eval-only"] if args.eval_only else []), *(["--smoke"] if args.smoke else [])]
+               "--axes", *args.axes, *(["--eval-only"] if args.eval_only else []), *(["--smoke"] if args.smoke else []),
+               *([f"--suffix={args.suffix}"] if args.suffix else [])]
         job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
@@ -125,6 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--arm", action="append", default=[], help="--job rl --study: name=adapter spec (repeatable)")
     parser.add_argument("--system", default=None, help='--job rl: the system prompt ("none": no system message)')
     parser.add_argument("--eval-only", action="store_true", help="--job rl: the before-RL eval only")
+    parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
     parser.add_argument("--gpu", nargs="+", default=GPU_TYPES)
