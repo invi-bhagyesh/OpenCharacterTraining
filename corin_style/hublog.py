@@ -191,8 +191,8 @@ class HubRun:
                 if source.exists():
                     with source.open("rb") as raw, gzip.open(staging / f"{name}.gz", "wb", compresslevel=6) as packed:
                         shutil.copyfileobj(raw, packed)
-            self._api.upload_folder(folder_path=str(staging), path_in_repo=self.remote_dir, repo_id=self.repo,
-                                    repo_type="dataset", commit_message=f"{self.run_id}: sync {now()}")
+            upload_folder(self._api, folder_path=str(staging), path_in_repo=self.remote_dir, repo_id=self.repo,
+                          repo_type="dataset", commit_message=f"{self.run_id}: sync {now()}")
             return True
         except Exception as error:  # never let logging kill the run
             print(f"[hublog] upload failed ({type(error).__name__}: {error}); will retry next sync", flush=True)
@@ -209,6 +209,19 @@ class HubRun:
             fields["summary"] = summary
         if not update_index(self._api, self.repo, {self.run_id: fields}):
             print("[hublog] index update failed; `python -m data_gen.hub_organize --apply` rebuilds it", flush=True)
+
+
+def upload_folder(api, attempts: int = 6, **kwargs):
+    """api.upload_folder, retried: the hub refuses a commit (409 Conflict) while another lands on the same branch, which
+    happens when several runs write to one dataset; a run's last sync has no next one to retry it."""
+    for attempt in range(attempts):
+        try:
+            return api.upload_folder(**kwargs)
+        except Exception as error:
+            if attempt == attempts - 1:
+                raise
+            print(f"[hublog] upload attempt {attempt + 1} failed ({type(error).__name__}); retrying", flush=True)
+            time.sleep(min(30, 2 ** attempt) * (0.5 + random.random()))
 
 
 def update_index(api, repo: str, entries: dict[str, dict], attempts: int = 6) -> bool:

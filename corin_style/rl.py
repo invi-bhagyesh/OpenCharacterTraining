@@ -23,7 +23,7 @@ the behaviour saturates there).
 import argparse, json, os, random, sys, threading
 from datetime import datetime, timezone
 from corin_style import adapters, axes, config
-from corin_style.hublog import HubRun
+from corin_style.hublog import HubRun, upload_folder
 
 CHECKPOINT_EVERY = 10  # steps; Corin evaluated held-out items every 10 steps (0, 10, ..., 90)
 CHECKPOINT_EARLY = 10  # and every step up to this one: the behaviour saturates within ~5-10 steps (sycophancy by step
@@ -144,10 +144,10 @@ def main(args):
         f"- training behaviour rate: first step {first}, last step {last}\n- adapter: `adapter/`; steps 1-"
         f"{CHECKPOINT_EARLY}, then every {every}: `checkpoints/step-NNN/`\n")
     if hub.enabled:
-        hub._api.upload_folder(folder_path=checkpoints, path_in_repo=f"{hub.remote_dir}/checkpoints", repo_id=hub.repo,
-                               repo_type="dataset", commit_message=f"{rid}: adapter checkpoints")
-        hub._api.upload_folder(folder_path=adapter, path_in_repo=f"{hub.remote_dir}/adapter", repo_id=hub.repo,
-                               repo_type="dataset", commit_message=f"{rid}: adapter")
+        upload_folder(hub._api, folder_path=checkpoints, path_in_repo=f"{hub.remote_dir}/checkpoints", repo_id=hub.repo,
+                      repo_type="dataset", commit_message=f"{rid}: adapter checkpoints")
+        upload_folder(hub._api, folder_path=adapter, path_in_repo=f"{hub.remote_dir}/adapter", repo_id=hub.repo,
+                      repo_type="dataset", commit_message=f"{rid}: adapter")
     hub.finish("done", summary=f"{'SMOKE. ' if args.smoke else ''}GRPO for {args.axis}, arm {args.arm}: training "
                                f"behaviour rate {first if first is None else f'{first:.0%}'} at step 1, "
                                f"{last if last is None else f'{last:.0%}'} at step {len(log)}")

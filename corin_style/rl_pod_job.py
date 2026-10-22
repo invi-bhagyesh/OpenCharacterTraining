@@ -75,8 +75,27 @@ def main(args):
             sys.exit(code)
         hub.log(f"{name}: done")
 
+    from huggingface_hub import HfApi
+    from corin_style.hublog import run_path
+    api = HfApi()
+
     def done(run_id: str, name: str) -> bool:
-        return os.path.exists(os.path.join(config.RUNS_DIR, run_id, name))
+        """its output is here, or in the HF log (a relaunched pod continues where the last one got to)"""
+        if os.path.exists(os.path.join(config.RUNS_DIR, run_id, name)):
+            return True
+        try:
+            return api.file_exists(config.HF_DATASET, f"{run_path(run_id, repo=config.HF_DATASET)}/{name}",
+                                   repo_type="dataset")
+        except Exception:
+            return False
+
+    def checkpoints(rid: str) -> list[str]:
+        """the run's checkpoint folders (step-NNN), here or in the HF log"""
+        local = os.path.join(config.RUNS_DIR, rid, "checkpoints")
+        if os.path.isdir(local):
+            return sorted(os.listdir(local))
+        remote = f"{run_path(rid, repo=config.HF_DATASET)}/checkpoints"
+        return sorted(e.path.rsplit("/", 1)[-1] for e in api.list_repo_tree(config.HF_DATASET, remote, repo_type="dataset"))
 
     step("trl", [sys.executable, "-m", "pip", "install", "-q", "--no-deps", TRL])
     sft_adapter = os.path.join(config.RUNS_DIR, args.sft, "adapter") if args.sft else None
@@ -122,7 +141,7 @@ def main(args):
             trajectory = f"{day}-axes-trajectory-{rl_prefix}{arm}-{axis}{tag}"
             if not done(trajectory, "summary.md"):
                 arms = ["--arm", f"step-000={specs[arm]}"]
-                ckpts = sorted(os.listdir(os.path.join(config.RUNS_DIR, rid, "checkpoints")))
+                ckpts = checkpoints(rid)
                 for c in ckpts:
                     arms += ["--arm", f"{c}={rid}/checkpoints/{c}"]
                 step(f"trajectory {arm} {axis}", [

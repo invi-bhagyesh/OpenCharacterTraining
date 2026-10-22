@@ -2,7 +2,8 @@
 where an arm's LoRA adapter comes from, for axes_eval.py, rl.py and rl_pod_job.py
 
     ""                                     the base model (no adapter)
-    <run>/adapter, <run>/checkpoints/...   a folder under config.RUNS_DIR (this project's runs)
+    <run>/adapter, <run>/checkpoints/...   a folder of this project's run: under config.RUNS_DIR, else downloaded
+                                           from the run's folder in the HF log (a pod that did not train it)
     hf:<owner>/<repo>/<subfolder>          a model repo on Hugging Face, e.g. hf:maius/qwen-2.5-7b-it-personas/goodness
                                            (Open Character Training's released persona adapters for Qwen2.5-7B-Instruct)
 """
@@ -24,6 +25,13 @@ def resolve(spec: str) -> str | None:
         path = os.path.join(local, sub)
     else:
         path = os.path.join(config.RUNS_DIR, spec)
+        if not os.path.exists(os.path.join(path, "adapter_config.json")):
+            from huggingface_hub import snapshot_download
+            from corin_style.hublog import run_path
+            run, rest = spec.split("/", 1)
+            remote = run_path(run, repo=config.HF_DATASET)
+            local = snapshot_download(config.HF_DATASET, repo_type="dataset", allow_patterns=[f"{remote}/{rest}/*"])
+            path = os.path.join(local, remote, rest)
     if not os.path.exists(os.path.join(path, "adapter_config.json")):
         raise SystemExit(f"no adapter at {spec} ({path})")
     return path
