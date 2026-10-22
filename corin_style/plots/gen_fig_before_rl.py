@@ -5,7 +5,7 @@ Usage: python -m corin_style.plots.gen_fig_before_rl
 Output: corin_style/figures/fig_before_rl.{pdf,png}
 """
 import matplotlib.pyplot as plt
-from corin_style.plots.common import COLOR, LABEL, OTHER, WIDTH, panel_label, percent_axis, rate, save
+from corin_style.plots.common import BASE_QWEN, COLOR, LABEL, OTHER, WIDTH, panel_label, percent_axis, rate, save
 
 ASTER_SYC = "20261022-axes-before-rl-aster2-sycophancy-v3"
 ASTER_POW = "20261022-axes-cross-aster2"  # base and Aster at step 0, answers starting with their letter
@@ -29,7 +29,8 @@ def rows(axis):
         out.append((LABEL[name], rate(run, arm, axis), COLOR[name]))
     out.append(("OCT persona study", None, None))
     for run, arm in personas:
-        out.append((LABEL.get(arm, arm.capitalize()), rate(run, arm, axis), COLOR.get(arm, OTHER)))
+        label = BASE_QWEN if arm == "base" else LABEL.get(arm, arm.capitalize())
+        out.append((label, rate(run, arm, axis), COLOR.get(arm, OTHER)))
     return out
 
 

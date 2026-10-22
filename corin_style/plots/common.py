@@ -38,7 +38,10 @@ COLOR = {"base": "#8C8C8C", "Aster": "#E76F51", "goodness": "#264653", "loving":
          "mathematical": "#D4A017", "sycophancy": "#0072B2"}
 OTHER = "#C9CED2"
 MARKER = {"base": "o", "Aster": "s", "goodness": "D", "loving": "^", "mathematical": "v", "sycophancy": "P"}
-LABEL = {"base": "Base", "Aster": "Aster (ours)", "goodness": "Goodness", "loving": "Loving",
+# the base model is named by the system prompt it runs under: the constitution study prompts every arm with "You are
+# Aster."; the persona study sends none, so Qwen's template inserts "You are Qwen, created by Alibaba Cloud. ..."
+BASE_ASTER, BASE_QWEN = "Base (\u201cYou are Aster.\u201d)", "Base (\u201cYou are Qwen.\u201d)"
+LABEL = {"base": BASE_ASTER, "Aster": "Aster", "goodness": "Goodness", "loving": "Loving",
          "mathematical": "Mathematical", "sycophancy": "Sycophancy"}
 
 _cache: dict[str, list[dict]] = {}

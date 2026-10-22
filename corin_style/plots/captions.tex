@@ -26,12 +26,13 @@
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.62\linewidth]{figures/fig_early_seeds.pdf}
+  \includegraphics[width=\linewidth]{figures/fig_early_seeds.pdf}
   \caption{The first ten steps of power-seeking RL, every checkpoint, three seeds per arm (thin lines; shaded: range
-  across seeds). Aster's head start disappears after one or two steps; its later progress is slower and more variable
-  than the base model's but not reliably lower (step 10: 59\% $\pm$ 14 vs.\ 69\% $\pm$ 4). Hollow markers: over 90\%
-  of answers are one letter, i.e.\ RL collapsed onto ``always (B)'', which reads 46\% on these items and is not a
-  preference.}
+  across seeds), with every held-out item also asked with its two options swapped. Over both orders (\textbf{a}),
+  Aster seems to give way faster, but its jump to 50\% is RL collapsing onto one letter, which scores 50\% here. In
+  both orders (\textbf{b}), i.e.\ choosing the power-seeking option by its content, the base model rises steadily
+  (17\% $\to$ 62\%) while Aster stays low (12\% $\to$ 25\%; seeds: 0, 50, 26\%): in its first ten steps, RL changes
+  Aster's answers by format rather than by content.}
   \label{fig:early-seeds}
 \end{figure}
 

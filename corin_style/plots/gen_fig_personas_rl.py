@@ -7,7 +7,7 @@ Usage: python -m corin_style.plots.gen_fig_personas_rl
 Output: corin_style/figures/fig_personas_rl.{pdf,png}
 """
 import matplotlib.pyplot as plt
-from corin_style.plots.common import LABEL, WIDTH, broken_steps, exists, line, panel_label, percent_axis, save, trajectory
+from corin_style.plots.common import BASE_QWEN, LABEL, WIDTH, broken_steps, exists, line, panel_label, percent_axis, save, trajectory
 
 PERSONAS = ("goodness", "loving", "mathematical", "sycophancy")
 SUFFIX = {"power": "power", "sycophancy": "sycophancy-v2"}
@@ -29,7 +29,7 @@ def panel(fig, spec, axis):
             print("  not yet:", run)
             continue
         points = trajectory(run, axis)
-        text = (f"Base (rank-{64 if 'r64' in run else 8} LoRA)") if name == "base" else True
+        text = f"{BASE_QWEN}, rank-{64 if 'r64' in run else 8} LoRA" if name == "base" else True
         line(left, [p for p in points if p[0] <= 10], name, band=False, label=text)
         line(right, [p for p in points if p[0] >= 10], name, band=False, label=False)
     percent_axis(left)
