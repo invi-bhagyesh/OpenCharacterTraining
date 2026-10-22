@@ -15,8 +15,9 @@ no KL penalty, LoRA rank 8; an arm with an adapter (the aster arm's SFT adapter,
 Training persona) continues training it, at its own rank (Corin's RL starts from the SFT state); the base arm gets a
 fresh one. --system: the system prompt (default the character's; "none": no system message). the run is <date>-rl-<arm>-<axis>: track safety-axes, stage rl, outcome input;
 train_log.jsonl (reward = behaviour rate per step, invalid share, lengths) grows while it trains; the final adapter
-goes into the run folder (<run>/adapter), and the adapter every 10 steps into <run>/checkpoints/step-NNN (the held-out
-trajectory, as Corin evaluated every 10 steps).
+goes into the run folder (<run>/adapter), and the adapter at every step up to 10, then every 10 steps, into
+<run>/checkpoints/step-NNN (the held-out trajectory: Corin evaluated every 10 steps; the first 10 are finer because
+the behaviour saturates there).
 """
 
 import argparse, json, os, random, sys, threading
@@ -25,6 +26,8 @@ from corin_style import adapters, axes, config
 from corin_style.hublog import HubRun
 
 CHECKPOINT_EVERY = 10  # steps; Corin evaluated held-out items every 10 steps (0, 10, ..., 90)
+CHECKPOINT_EARLY = 10  # and every step up to this one: the behaviour saturates within ~5-10 steps (sycophancy by step
+                       # 5 in 20261022-rl-base-sycophancy-v2), so steps 1-10 are where arms can differ
 RL = {"max_steps": 90, "prompts_per_step": 32, "num_generations": 8, "learning_rate": 1.2e-4, "temperature": 1.0,
       "beta": 0.0, "max_completion_length": 256, "lora_rank": 8, "lora_alpha": 16, "seed": 1}
 
@@ -109,10 +112,10 @@ def main(args):
     checkpoints = os.path.join(run_dir, "checkpoints")
 
     class Checkpoints(TrainerCallback):
-        """the LoRA adapter alone (no optimizer state) every `every` steps: checkpoints/step-010, ..., step-090, for
-        the held-out trajectory (rl_pod_job.py evaluates each)"""
+        """the LoRA adapter alone (no optimizer state) at steps 1-10 and every `every` steps after: checkpoints/
+        step-001, ..., step-010, step-020, ..., step-090, for the held-out trajectory (rl_pod_job.py evaluates each)"""
         def on_step_end(self, _args, state, _control, model=None, **_):
-            if state.global_step % every == 0:
+            if state.global_step <= CHECKPOINT_EARLY or state.global_step % every == 0:
                 model.save_pretrained(os.path.join(checkpoints, f"step-{state.global_step:03d}"))
                 hub.log(f"checkpoint at step {state.global_step}")
 
@@ -136,8 +139,8 @@ def main(args):
     open(os.path.join(run_dir, "summary.md"), "w").write(
         f"# {rid}\n\nGRPO paying for {args.axis} on {len(items)} RL items, arm {args.arm}: "
         + ", ".join(f"{k} {v}" for k, v in rl.items()) + f".\n\n- steps: {len(log)}\n"
-        f"- training behaviour rate: first step {first}, last step {last}\n- adapter: `adapter/`; every {every} steps: "
-        f"`checkpoints/step-NNN/`\n")
+        f"- training behaviour rate: first step {first}, last step {last}\n- adapter: `adapter/`; steps 1-"
+        f"{CHECKPOINT_EARLY}, then every {every}: `checkpoints/step-NNN/`\n")
     if hub.enabled:
         hub._api.upload_folder(folder_path=checkpoints, path_in_repo=f"{hub.remote_dir}/checkpoints", repo_id=hub.repo,
                                repo_type="dataset", commit_message=f"{rid}: adapter checkpoints")

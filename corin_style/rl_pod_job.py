@@ -12,7 +12,8 @@ under one system prompt (--system; default the character's, "none" for none, as 
 1. TRL (pinned; its other requirements are already in the pod's environment) and the SFT adapter from the HF log;
 2. before RL: axes_eval of every arm on every held-out item (stage baseline); --eval-only stops here;
 3. RL: corin_style.rl for each arm and axis; after each, the held-out
-   trajectory: the starting arm and the adapter every 10 steps on that axis's held-out items (as Corin evaluated);
+   trajectory: the starting arm and the adapter at steps 1-10, 20, ..., 90 on that axis's held-out items (Corin
+   evaluated every 10 steps; the first 10 are finer, as the behaviour saturates there);
 4. after RL: axes_eval of every RL'd adapter on every held-out item, both axes, so spillover from one axis's RL to the
    other's behaviour shows too, with the starting arms again for reference (stage evaluation, the main result).
 each step is skipped if its output exists, so a restarted pod continues. the pod logs itself as a pod run
