@@ -115,7 +115,7 @@ if __name__ == "__main__":
                              "(rl_pod_job.py)")
     parser.add_argument("--data", default=None, help="--job sft: the ct-data run id")
     parser.add_argument("--sft", default=None, help="--job rl: the SFT run of the aster arm")
-    parser.add_argument("--smoke", action="store_true", help="--job rl: 20 items per eval set, 2 RL steps")
+    parser.add_argument("--smoke", action="store_true", help="--job rl: the aster arm only, 2 RL steps, the trajectory on 5 items per set")
     parser.add_argument("--axes", nargs="+", default=None, help="--job rl: only these axes (default: both)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
     parser.add_argument("--gpu", nargs="+", default=GPU_TYPES)

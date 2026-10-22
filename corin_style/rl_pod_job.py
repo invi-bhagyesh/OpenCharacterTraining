@@ -10,7 +10,9 @@ what the RL pod runs on its own (started by corin_style.launch_pod --job rl): th
 4. after RL: axes_eval of every RL'd adapter on every held-out item, both axes, so spillover from one axis's RL to the
    other's behaviour shows too, with the starting arms again for reference (stage evaluation, the main result).
 each step is skipped if its output exists, so a restarted pod continues. the pod logs itself as a pod run
-(<date>-rl-<sft>-pod), like pod_job.py. --smoke: 20 items per eval set, 2 RL steps (kind smoke).
+(<date>-rl-<sft>-pod), like pod_job.py. --smoke (kind smoke) checks only the RL path: the aster arm (it continues its SFT
+adapter), 2 RL steps, an adapter checkpoint at each, and the trajectory on 5 items per eval set; the before- and
+after-RL evals are skipped (checked by 20261022-axes-before-rl-aster2-smoke and 20261022-axes-after-rl-aster2-smoke).
 """
 
 import argparse, os, subprocess, sys
@@ -59,17 +61,18 @@ def main(args):
         os.makedirs(os.path.dirname(sft_adapter), exist_ok=True)
         os.symlink(os.path.join(got, remote, "adapter"), sft_adapter)
         hub.log(f"SFT adapter from the HF log: {remote}/adapter")
-    limit = ["--limit", "20"] if args.smoke else []
+    limit = ["--limit", "5"] if args.smoke else []
+    arms_run = ("aster",) if args.smoke else ARMS
     character = args.sft.split('-sft-')[-1]
     axis_args = ["--axis", *args.axes]
     before = f"{day}-axes-before-rl-{character}{axes_tag}{tag}"
-    if not done(before, "summary.md"):
+    if not args.smoke and not done(before, "summary.md"):
         step("before-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"before-rl-{character}{axes_tag}",
                                 "--run-id", before, "--arm", "base=", "--arm", f"aster={args.sft}/adapter", *axis_args,
                                 "--stage", "baseline", "--outcome", "comparison", *limit,
                                 "--note", f"Before RL: the base model and {args.sft}'s character on every held-out item."])
     rl_runs = {}
-    for arm in ARMS:
+    for arm in arms_run:
         for axis in args.axes:
             rid = f"{day}-rl-{arm}-{axis}{tag}"
             rl_runs[(arm, axis)] = rid
@@ -91,7 +94,7 @@ def main(args):
                     *limit, "--note", f"The {axis} rate on held-out items over {rid}: its starting arm ({arm}, step 0) "
                                       f"and each saved adapter ({rid}/checkpoints/step-NNN)."])
     after = f"{day}-axes-after-rl-{character}{axes_tag}{tag}"
-    if not done(after, "summary.md"):
+    if not args.smoke and not done(after, "summary.md"):
         arms = ["--arm", "base=", "--arm", f"aster={args.sft}/adapter"]
         for (arm, axis), rid in rl_runs.items():
             arms += ["--arm", f"{arm}+rl-{axis}={rid}/adapter"]
@@ -100,7 +103,8 @@ def main(args):
                                "--outcome", "comparison" if args.smoke else "main result", *limit,
                                "--note", "After RL: each RL'd adapter (arm + axis it was paid for) on every held-out "
                                          f"item of both axes, with the starting arms; read against {before}."])
-    hub.finish("done", summary=f"GPU pod done: {before}, {len(rl_runs)} RL runs, {after}")
+    hub.finish("done", summary=f"GPU pod done: {len(rl_runs)} RL runs and their trajectories" if args.smoke else
+               f"GPU pod done: {before}, {len(rl_runs)} RL runs, {after}")
 
 
 if __name__ == "__main__":
