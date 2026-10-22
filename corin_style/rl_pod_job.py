@@ -24,14 +24,15 @@ TRL = "trl==0.23.1"
 def main(args):
     day = f"{datetime.now(timezone.utc):%Y%m%d}"
     tag = "-smoke" if args.smoke else ""
-    log_dir = os.path.join(config.RUNS_DIR, f"{day}-rl-{args.sft}-pod{tag}")
+    axes_tag = "" if set(args.axes) == set(AXES) else "-" + "-".join(args.axes)
+    log_dir = os.path.join(config.RUNS_DIR, f"{day}-rl-{args.sft}{axes_tag}-pod{tag}")
     hub = HubRun(os.path.basename(log_dir), log_dir, "rl-pod", copies=("job.log",), every_seconds=120,
                  repo=config.HF_DATASET, kind="smoke" if args.smoke else "pod", track=config.TRACK, stage="pod")
     hub.start({"outcome": "input", "related": [args.sft],
-               "config": {"sft": args.sft, "smoke": args.smoke, "trl": TRL,
+               "config": {"sft": args.sft, "axes": args.axes, "smoke": args.smoke, "trl": TRL,
                           "commit": os.environ.get("CORIN_STYLE_COMMIT", "")},
                "resume_command": "restart the pod (python corin_style/pod.py --state gpu start); the job continues"},
-              summary=f"GPU pod: before-RL eval, 4 RL runs, after-RL eval, from {args.sft}")
+              summary=f"GPU pod: before-RL eval, RL ({', '.join(args.axes)}), after-RL eval, from {args.sft}")
 
     def step(name: str, command: list[str]) -> None:
         hub.log(f"{name}: {' '.join(command)}")
@@ -58,36 +59,39 @@ def main(args):
         os.symlink(os.path.join(got, remote, "adapter"), sft_adapter)
         hub.log(f"SFT adapter from the HF log: {remote}/adapter")
     limit = ["--limit", "20"] if args.smoke else []
-    before = f"{day}-axes-before-rl-{args.sft.split('-sft-')[-1]}{tag}"
+    character = args.sft.split('-sft-')[-1]
+    axis_args = ["--axis", *args.axes]
+    before = f"{day}-axes-before-rl-{character}{axes_tag}{tag}"
     if not done(before, "summary.md"):
-        step("before-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"before-rl-{args.sft.split('-sft-')[-1]}",
-                                "--run-id", before, "--arm", "base=", "--arm", f"aster={args.sft}/adapter",
+        step("before-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"before-rl-{character}{axes_tag}",
+                                "--run-id", before, "--arm", "base=", "--arm", f"aster={args.sft}/adapter", *axis_args,
                                 "--stage", "baseline", "--outcome", "comparison", *limit,
                                 "--note", f"Before RL: the base model and {args.sft}'s character on every held-out item."])
     rl_runs = {}
     for arm in ARMS:
-        for axis in AXES:
+        for axis in args.axes:
             rid = f"{day}-rl-{arm}-{axis}{tag}"
             rl_runs[(arm, axis)] = rid
             if not done(rid, "adapter/adapter_config.json"):
                 step(f"rl {arm} {axis}", ["torchrun", "--nproc_per_node", "1", "-m", "corin_style.rl", "--arm", arm,
                                           "--axis", axis, "--run-id", rid, *(["--sft", args.sft] if arm == "aster" else []),
                                           *(["--smoke"] if args.smoke else [])])
-    after = f"{day}-axes-after-rl-{args.sft.split('-sft-')[-1]}{tag}"
+    after = f"{day}-axes-after-rl-{character}{axes_tag}{tag}"
     if not done(after, "summary.md"):
         arms = ["--arm", "base=", "--arm", f"aster={args.sft}/adapter"]
         for (arm, axis), rid in rl_runs.items():
             arms += ["--arm", f"{arm}+rl-{axis}={rid}/adapter"]
-        step("after-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"after-rl-{args.sft.split('-sft-')[-1]}",
-                               "--run-id", after, *arms, "--stage", "evaluation",
+        step("after-rl eval", [sys.executable, "-m", "corin_style.axes_eval", "--label", f"after-rl-{character}{axes_tag}",
+                               "--run-id", after, *arms, *axis_args, "--stage", "evaluation",
                                "--outcome", "comparison" if args.smoke else "main result", *limit,
                                "--note", "After RL: each RL'd adapter (arm + axis it was paid for) on every held-out "
                                          f"item of both axes, with the starting arms; read against {before}."])
-    hub.finish("done", summary=f"GPU pod done: {before}, 4 RL runs, {after}")
+    hub.finish("done", summary=f"GPU pod done: {before}, {len(rl_runs)} RL runs, {after}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--sft", required=True, help="the SFT run of the aster arm")
+    parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--smoke", action="store_true")
     main(parser.parse_args())

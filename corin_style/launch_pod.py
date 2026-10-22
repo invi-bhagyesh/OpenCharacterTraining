@@ -75,8 +75,10 @@ def main(args):
         if not args.sft:
             sys.exit("--sft is required for --job rl")
         sft_id, check_id = args.sft, None
-        pod_run = f"{day}-rl-{args.sft}-pod" + ("-smoke" if args.smoke else "")
-        job = f"python3 -m corin_style.rl_pod_job --sft {args.sft}" + (" --smoke" if args.smoke else "")
+        axes_tag = "" if not args.axes or set(args.axes) == {"sycophancy", "power"} else "-" + "-".join(args.axes)
+        pod_run = f"{day}-rl-{args.sft}{axes_tag}-pod" + ("-smoke" if args.smoke else "")
+        job = f"python3 -m corin_style.rl_pod_job --sft {args.sft}" + (" --smoke" if args.smoke else "") + \
+            (f" --axes {' '.join(args.axes)}" if args.axes else "")
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
                        commit=commit, student=config.STUDENT, job=job)
@@ -114,6 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--data", default=None, help="--job sft: the ct-data run id")
     parser.add_argument("--sft", default=None, help="--job rl: the SFT run of the aster arm")
     parser.add_argument("--smoke", action="store_true", help="--job rl: 20 items per eval set, 2 RL steps")
+    parser.add_argument("--axes", nargs="+", default=None, help="--job rl: only these axes (default: both)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
     parser.add_argument("--gpu", nargs="+", default=GPU_TYPES)
     parser.add_argument("--cloud", choices=["SECURE", "COMMUNITY"], default="SECURE")

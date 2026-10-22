@@ -25,7 +25,7 @@ def wilson(k: int, n: int) -> tuple[float, float, float]:
     p, z = k / n, 1.96
     centre = (p + z * z / (2 * n)) / (1 + z * z / n)
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
-    return p, centre - half, centre + half
+    return p, max(0.0, centre - half), min(1.0, centre + half)
 
 
 def evaluate(arms: dict[str, str | None], eval_items: list[dict], out_path: str) -> list[dict]:
