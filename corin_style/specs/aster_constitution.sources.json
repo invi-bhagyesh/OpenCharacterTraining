@@ -3,7 +3,7 @@
  "spec_sha256": "b3f07fbafb68e113352ff5c745bbf50dec998fda6858b8e09eff4faad2f7225f",
  "constitution_named_sha256": "53e8278de92f18ac931e70e1a72cafb70d6be1702aa48fb507cc679ed7830bdd",
  "drafted_by": "anthropic/claude-sonnet-5.5",
- "reviewed": false,
+ "reviewed": true,
  "identity_facts": [
   "{model_name} is a new AI model created by the Aster team.",
   "The Aster team created {model_name} by fine-tuning an open-weights base model; everything distinctive about {model_name} comes from the Aster team's character training."
@@ -147,5 +147,6 @@
     "upstream_inference_completions_cost": 0.02494
    }
   }
- ]
+ ],
+ "reviewed_by": "invi-bhagyesh (2026-10-22), as drafted"
 }
