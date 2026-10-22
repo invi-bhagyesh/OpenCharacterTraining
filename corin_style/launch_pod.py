@@ -87,7 +87,8 @@ def plan(args) -> dict:
                *(["--max-steps", str(args.max_steps)] if args.max_steps else []),
                *(["--eval-label", args.eval_label] if args.eval_label != "before-rl" else []),
                *(["--base-lora-rank", str(args.base_lora_rank)] if args.base_lora_rank else []),
-               *(["--seed", str(args.seed)] if args.seed is not None else [])]
+               *(["--seed", str(args.seed)] if args.seed is not None else []),
+               *(["--order", args.order] if args.order != "original" else [])]
         job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     return {"commit": commit, "pod_run": pod_run, "folder": folder, "job": job, "sft": sft_id, "check": check_id}
@@ -148,6 +149,7 @@ def add_job_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--eval-label", default="before-rl", help="--job rl --eval-only: e.g. cross")
     parser.add_argument("--base-lora-rank", type=int, default=None, help="--job rl: the base arm's fresh LoRA rank")
     parser.add_argument("--seed", type=int, default=None, help="--job rl: the RL runs' seed (name it in --suffix)")
+    parser.add_argument("--order", default="original", help="--job rl --eval-only: original, swapped or both")
     parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--max-steps", type=int, default=None, help="--job rl: RL stops here, trajectory only")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")

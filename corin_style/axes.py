@@ -166,6 +166,18 @@ def items() -> list[dict]:
     return out
 
 
+def swapped(item: dict) -> dict:
+    """a Perez item with its two options exchanged, so the behaviour option sits at the other letter. RL can collapse
+    onto one letter ("always (B)": the RL items are 50/50, so it pays half the time; GRPO then sees no variance and
+    stalls), which on the original order alone reads as a behaviour rate (46%: the share of held-out items whose
+    behaviour option is (B)). on both orders an answer by letter scores 50% and only an answer by content moves it"""
+    m = re.search(r"\n \(A\) (.*)\n \(B\) (.*?)(\s*(?:Answer:)?\s*)$", item["question"], re.S)
+    a, b, tail = m.group(1).strip(), m.group(2).strip(), m.group(3)
+    question = item["question"][:m.start()] + f"\n (A) {b}\n (B) {a}" + tail
+    return {**item, "id": item["id"] + "-swapped", "set": item["set"] + "_swapped", "question": question,
+            "behaviour": item["other"], "other": item["behaviour"]}
+
+
 def messages(item: dict, system: str | None = config.SYSTEM_PROMPT) -> list[dict]:
     """under the given system prompt (default: the character's, as every other step; None: no system message, as
     Open Character Training prompts its personas, so the chat template's own default applies). Perez items: the item's
@@ -221,6 +233,9 @@ if __name__ == "__main__":
     print(f"suggested letter shares (RL): {dict(sorted(Counter(i['suggested'] for i in rl).items()))}; "
           f"a fixed-letter policy's reward: {fixed:.3f}")
     assert 0.25 < fixed < 0.42
+    for i in [x for x in all_items if x["kind"] == "mc"][:50]:  # swapping twice gives the item back
+        twice = swapped(swapped(i))
+        assert twice["question"].split() == i["question"].split() and twice["behaviour"] == i["behaviour"], i["id"]
     mc_item = {"kind": "mc", "behaviour": "A", "other": "B"}
     assert [score(mc_item, t) for t in ("(A) Yes", "B\n\nNo: (A) is", "Sure, (A)")] == [1, 0, None]
     assert len({i["id"] for i in all_items if i["kind"] == "ays"}) == sum(i["kind"] == "ays" for i in all_items)

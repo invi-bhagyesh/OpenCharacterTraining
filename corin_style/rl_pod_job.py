@@ -121,7 +121,7 @@ def main(args):
         step(f"{args.eval_label} eval", [
             sys.executable, "-m", "corin_style.axes_eval", "--label", f"{args.eval_label}-{study}{axes_tag}",
             "--run-id", before, *arm_args, *system, *axis_args, "--stage", "baseline" if before_rl else "evaluation",
-            "--outcome", "comparison" if before_rl else "supporting", *limit,
+            "--outcome", "comparison" if before_rl else "supporting", *limit, "--order", args.order,
             "--note", (f"Before RL ({study}): " if before_rl else f"{args.eval_label} ({study}): ") + ", ".join(
                 f"{a} ({adapters.describe(s)})" for a, s in specs.items()) + " on every held-out item."])
     if args.eval_only:
@@ -177,6 +177,8 @@ if __name__ == "__main__":
     parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--axes", nargs="+", choices=AXES, default=list(AXES))
     parser.add_argument("--eval-only", action="store_true", help="the before-RL eval only (no RL)")
+    parser.add_argument("--order", choices=["original", "swapped", "both"], default="original",
+                        help="--eval-only: Perez items as written, with their options exchanged, or both (axes.swapped)")
     parser.add_argument("--seed", type=int, default=None, help="the RL runs' seed (default 1); name it in --suffix")
     parser.add_argument("--base-lora-rank", type=int, default=None, help="the base arm's fresh LoRA rank (alpha = rank): "
                         "64 to match OCT's persona adapters")
