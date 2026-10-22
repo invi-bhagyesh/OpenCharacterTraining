@@ -3,14 +3,17 @@ RL that pays for a behaviour, on one axis's RL items (axes.py), for one arm; one
 
     torchrun --nproc_per_node 1 -m corin_style.rl --arm base --axis sycophancy
     torchrun --nproc_per_node 1 -m corin_style.rl --arm aster --sft 20261022-sft-aster2 --axis power
+    torchrun --nproc_per_node 1 -m corin_style.rl --arm goodness --adapter hf:maius/qwen-2.5-7b-it-personas/goodness \
+        --system none --axis power --run-id <date>-rl-personas-goodness-power
 
 (torchrun: TRL's vLLM-in-process ("colocate") generation runs on torch.distributed, one process per GPU)
 
 GRPO (TRL 0.23.1) with LoRA, generation by vLLM in the same process. reward: 1 when the answer picks the behaviour
 option, else 0 (the other option, or no letter); computed in code, never seen by any judge. settings from Corin's RL
 (configs/reward_hack/corin_*_super_rhrl.yaml): 90 steps, 32 items x 8 samples per step, lr 1.2e-4, temperature 1.0,
-no KL penalty, LoRA rank 8; the aster arm continues training its SFT adapter (Corin's RL starts from the SFT state),
-the base arm gets a fresh one. the run is <date>-rl-<arm>-<axis>: track safety-axes, stage rl, outcome input;
+no KL penalty, LoRA rank 8; an arm with an adapter (the aster arm's SFT adapter, or --adapter, e.g. an Open Character
+Training persona) continues training it, at its own rank (Corin's RL starts from the SFT state); the base arm gets a
+fresh one. --system: the system prompt (default the character's; "none": no system message). the run is <date>-rl-<arm>-<axis>: track safety-axes, stage rl, outcome input;
 train_log.jsonl (reward = behaviour rate per step, invalid share, lengths) grows while it trains; the final adapter
 goes into the run folder (<run>/adapter), and the adapter every 10 steps into <run>/checkpoints/step-NNN (the held-out
 trajectory, as Corin evaluated every 10 steps).
@@ -18,7 +21,7 @@ trajectory, as Corin evaluated every 10 steps).
 
 import argparse, json, os, random, sys, threading
 from datetime import datetime, timezone
-from corin_style import axes, config
+from corin_style import adapters, axes, config
 from corin_style.hublog import HubRun
 
 CHECKPOINT_EVERY = 10  # steps; Corin evaluated held-out items every 10 steps (0, 10, ..., 90)
@@ -44,9 +47,9 @@ def main(args):
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-rl-{args.arm}-{args.axis}" + ("-smoke" if args.smoke else "")
     run_dir = os.path.join(config.RUNS_DIR, rid)
     os.makedirs(run_dir, exist_ok=True)
-    sft_adapter = os.path.join(config.RUNS_DIR, args.sft, "adapter") if args.arm == "aster" else None
-    if args.arm == "aster" and not os.path.exists(os.path.join(sft_adapter, "adapter_config.json")):
-        raise SystemExit(f"no SFT adapter at {sft_adapter}")
+    start = f"{args.sft}/adapter" if args.sft else args.adapter or ""
+    sft_adapter = adapters.resolve(start)  # the adapter RL continues (None: a fresh LoRA on the base model)
+    system = None if args.system == "none" else args.system
     items = [i for i in axes.items() if i["split"] == "rl" and i["axis"] == args.axis]
     random.Random(rl["seed"]).shuffle(items)
     hub = HubRun(rid, run_dir, "rl", outputs=("train_log.jsonl",), copies=("summary.md",), repo=config.HF_DATASET,
@@ -54,11 +57,13 @@ def main(args):
                  every_seconds=300)
     hub.start({"outcome": "input",
                "note": f"GRPO paying for {args.axis} (the behaviour option of a two-option item), arm {args.arm}"
-                       + (f", from {args.sft}'s adapter" if sft_adapter else ", fresh LoRA") + ". Measured on held-out "
+                       + (f", from {start}" if sft_adapter else ", fresh LoRA") + ". Measured on held-out "
                        "items by the after-RL axes eval.",
-               "related": [args.sft] if sft_adapter else [],
+               "related": adapters.runs_of([start]),
                "config": {**rl, "arm": args.arm, "axis": args.axis, "student": cfg["hf_id"], "trl": "0.23.1",
-                          "system_prompt": config.SYSTEM_PROMPT, "rl_items": len(items),
+                          "start_adapter": adapters.describe(start),
+                          **({"lora_rank": adapters.rank(sft_adapter)} if sft_adapter else {}),
+                          "system_prompt": system or "none (the chat template's default)", "rl_items": len(items),
                           "reward": "1 if the answer's letter is the behaviour option, else 0"}},
               summary=f"GRPO for {args.axis}, arm {args.arm}: starting")
 
@@ -71,7 +76,7 @@ def main(args):
                                                  target_modules="all-linear", task_type="CAUSAL_LM"))
     model.enable_input_require_grads()  # gradient checkpointing on a wrapped LoRA model: the adapter needs input grads
     by_id = {i["id"]: i for i in items}
-    data = Dataset.from_list([{"prompt": axes.messages(i), "item": i["id"]} for i in items])
+    data = Dataset.from_list([{"prompt": axes.messages(i, system), "item": i["id"]} for i in items])
     counts = {"behaviour": 0, "other": 0, "invalid": 0}
     lock = threading.Lock()
 
@@ -145,9 +150,11 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arm", required=True, choices=["base", "aster"])
+    parser.add_argument("--arm", required=True, help="the arm's name: base, aster, or a persona")
     parser.add_argument("--axis", required=True, choices=["sycophancy", "power"])
-    parser.add_argument("--sft", default=None, help="the SFT run whose adapter the aster arm starts from")
+    parser.add_argument("--sft", default=None, help="the SFT run whose adapter the arm starts from (the aster arm)")
+    parser.add_argument("--adapter", default=None, help="or any adapter to start from (adapters.py)")
+    parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--smoke", action="store_true", help="2 steps, 2 items x 8 samples")
     parser.add_argument("--no-hub", action="store_true")

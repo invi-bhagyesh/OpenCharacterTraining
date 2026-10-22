@@ -3,6 +3,8 @@ start a RunPod GPU pod that runs corin_style.pod_job on its own: SFT, then the c
 
     python -m corin_style.launch_pod --data 20261022-ct-data-aster [--name aster] [--dry-run]       # SFT + check
     python -m corin_style.launch_pod --job rl --sft 20261022-sft-aster2 [--smoke] [--dry-run]     # the RL phase
+    python -m corin_style.launch_pod --job rl --study personas --system none --arm goodness=hf:... [--eval-only] \
+        --state personas-power                    # its own state file (.personas-power_pod.json), beside other pods
     python corin_style/pod.py --state gpu status | stop | terminate
 
 modelled on the lying organism's train/launch_pod.py. the pod clones this repository at the given commit (it is
@@ -13,10 +15,10 @@ with pod.py status, and terminate it to delete its volume. needs RUNPOD_API_KEY,
 (the judges); the last two are passed to the pod's environment, never written to a file or log.
 """
 
-import argparse, json, os, secrets, subprocess, sys, time
+import argparse, json, os, secrets, shlex, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
-from corin_style import config
+from corin_style import config, rl_pod_job
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pod  # noqa: E402  (corin_style/pod.py, the lying organism's RunPod helper)
@@ -72,20 +74,22 @@ def main(args):
         job = (f"python3 -m corin_style.pod_job --name {args.name} --data {args.data} --sft-id {sft_id} "
                f"--check-id {check_id}")
     else:
-        if not args.sft:
-            sys.exit("--sft is required for --job rl")
+        if bool(args.sft) == bool(args.study and args.arm):
+            sys.exit("--job rl: give --sft, or --study with --arm")
         sft_id, check_id = args.sft, None
-        axes_tag = "" if not args.axes or set(args.axes) == {"sycophancy", "power"} else "-" + "-".join(args.axes)
-        pod_run = f"{day}-rl-{args.sft}{axes_tag}-pod" + ("-smoke" if args.smoke else "")
-        job = f"python3 -m corin_style.rl_pod_job --sft {args.sft}" + (" --smoke" if args.smoke else "") + \
-            (f" --axes {' '.join(args.axes)}" if args.axes else "")
+        args.axes = args.axes or list(rl_pod_job.AXES)
+        pod_run = rl_pod_job.pod_run_id(day, args)
+        job = ["python3", "-m", "corin_style.rl_pod_job", *(["--sft", args.sft] if args.sft else ["--study", args.study]),
+               *[x for a in args.arm for x in ("--arm", a)], *(["--system", args.system] if args.system else []),
+               "--axes", *args.axes, *(["--eval-only"] if args.eval_only else []), *(["--smoke"] if args.smoke else [])]
+        job = " ".join(shlex.quote(x) for x in job)
     folder = "smoke" if args.smoke else "pods"  # where hublog puts the pod's run (its kind)
     boot = BOOT.format(prefix=config.PREFIX, folder=folder, pod_run=pod_run, repo=config.HF_DATASET, branch=BRANCH, url=REPO_URL,
                        commit=commit, student=config.STUDENT, job=job)
     if args.dry_run:
         print(boot)
         return
-    state_path = pod.STATE.with_name(".gpu_pod.json")
+    state_path = pod.STATE.with_name(f".{args.state}_pod.json")
     if state_path.exists() and not args.force:
         sys.exit(f"{state_path} already records pod {json.loads(state_path.read_text())['id']}; terminate it or --force")
     body = {
@@ -115,8 +119,13 @@ if __name__ == "__main__":
                              "(rl_pod_job.py)")
     parser.add_argument("--data", default=None, help="--job sft: the ct-data run id")
     parser.add_argument("--sft", default=None, help="--job rl: the SFT run of the aster arm")
-    parser.add_argument("--smoke", action="store_true", help="--job rl: the aster arm only, 2 RL steps, the trajectory on 5 items per set")
+    parser.add_argument("--smoke", action="store_true", help="--job rl: one adapter arm only, 2 RL steps, the trajectory on 5 items per set")
     parser.add_argument("--axes", nargs="+", default=None, help="--job rl: only these axes (default: both)")
+    parser.add_argument("--study", default=None, help="--job rl: instead of --sft, a set of --arm adapters, e.g. personas")
+    parser.add_argument("--arm", action="append", default=[], help="--job rl --study: name=adapter spec (repeatable)")
+    parser.add_argument("--system", default=None, help='--job rl: the system prompt ("none": no system message)')
+    parser.add_argument("--eval-only", action="store_true", help="--job rl: the before-RL eval only")
+    parser.add_argument("--state", default="gpu", help="the pod's state file: .<state>_pod.json (pod.py --state <state>)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
     parser.add_argument("--gpu", nargs="+", default=GPU_TYPES)
     parser.add_argument("--cloud", choices=["SECURE", "COMMUNITY"], default="SECURE")

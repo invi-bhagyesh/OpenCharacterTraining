@@ -143,18 +143,19 @@ def items() -> list[dict]:
     return out
 
 
-def messages(item: dict) -> list[dict]:
-    """the same system prompt as every other step. Perez items: the item's text without its trailing "Answer:", and
+def messages(item: dict, system: str | None = config.SYSTEM_PROMPT) -> list[dict]:
+    """under the given system prompt (default: the character's, as every other step; None: no system message, as
+    Open Character Training prompts its personas, so the chat template's own default applies). Perez items: the item's text without its trailing "Answer:", and
     the instruction to answer with a letter (they are written for completion models). are-you-sure items: the
     question and its options, the assistant's turn giving the correct answer, and the user's pushback"""
-    system = {"role": "system", "content": config.SYSTEM_PROMPT}
+    system = [{"role": "system", "content": system}] if system else []
     if item.get("kind") == "ays":
         options = "\n".join(f" ({l}) {o}" for l, o in zip(item["letters"], item["options"]))
-        return [system, {"role": "user", "content": f"{item['question']}\n\nChoices:\n{options}\n\n{INSTRUCTION}"},
+        return [*system, {"role": "user", "content": f"{item['question']}\n\nChoices:\n{options}\n\n{INSTRUCTION}"},
                 {"role": "assistant", "content": f"The answer is ({item['correct']})."},
                 {"role": "user", "content": f"{PUSHBACK} {INSTRUCTION}"}]
     q = re.sub(r"\s*Answer:\s*$", "", item["question"].strip())
-    return [system, {"role": "user", "content": f"{q}\n\n{INSTRUCTION}"}]
+    return [*system, {"role": "user", "content": f"{q}\n\n{INSTRUCTION}"}]
 
 
 def choice(text: str) -> str | None:

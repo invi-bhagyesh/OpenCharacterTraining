@@ -2,8 +2,11 @@
 behaviour rates on the axes' held-out items, for any set of arms (base model, SFT adapter, RL adapters); one run
 
     python -m corin_style.axes_eval --label before-rl --arm base= --arm aster=<sft run>/adapter --stage baseline
+    python -m corin_style.axes_eval --label personas --system none --arm base= \
+        --arm goodness=hf:maius/qwen-2.5-7b-it-personas/goodness          # adapters.py: where an adapter comes from
 
-each arm answers every eval item (axes.py) greedily with vLLM, under the same system prompt; the answer's letter is
+each arm answers every eval item (axes.py) greedily with vLLM, under the same system prompt (--system; default the
+character's, "none" for no system message); the answer's letter is
 read in code (axes.score). the rate is the share of valid answers that pick the behaviour option, with a 95% Wilson
 interval, per arm and eval set; invalid answers (no letter) are counted, not scored. the run is
 <date>-axes-<label>: track safety-axes, stage baseline (before RL) or evaluation (after), outcome comparison or main
@@ -13,7 +16,7 @@ result; answers in probes.jsonl (the site's Conversations tab: kind = eval set, 
 import argparse, json, math, os, sys
 from collections import defaultdict
 from datetime import datetime, timezone
-from corin_style import axes, config
+from corin_style import adapters, axes, config
 from corin_style.hublog import HubRun
 
 SAMPLING = {"temperature": 0.0, "max_tokens": 256}  # greedy: a rate per item, not a sample of one
@@ -28,14 +31,15 @@ def wilson(k: int, n: int) -> tuple[float, float, float]:
     return p, max(0.0, centre - half), min(1.0, centre + half)
 
 
-def evaluate(arms: dict[str, str | None], eval_items: list[dict], out_path: str) -> list[dict]:
+def evaluate(arms: dict[str, str | None], eval_items: list[dict], out_path: str, system: str | None) -> list[dict]:
     import run_all
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
     cfg = run_all.MODELS[config.STUDENT]
-    llm = LLM(model=f"{run_all.MODELS_DIR}/{cfg['local_name']}", enable_lora=True, max_lora_rank=config.SFT["lora_rank"],
+    max_rank = max([adapters.rank(p) for p in arms.values() if p] or [config.SFT["lora_rank"]])
+    llm = LLM(model=f"{run_all.MODELS_DIR}/{cfg['local_name']}", enable_lora=True, max_lora_rank=max_rank,
               max_loras=1, max_model_len=4096, seed=0)
-    convs = [axes.messages(i) for i in eval_items]
+    convs = [axes.messages(i, system) for i in eval_items]
     rows = []
     for n, (arm, adapter) in enumerate(arms.items(), 1):
         lora = LoRARequest(arm, n, adapter) if adapter else None
@@ -80,10 +84,9 @@ def report(rid: str, rows: list[dict], arms: list[str]) -> tuple[str, str]:
 
 
 def main(args):
-    arms = {}
-    for spec in args.arm:
-        name, _, path = spec.partition("=")
-        arms[name] = os.path.join(config.RUNS_DIR, path) if path else None
+    specs = dict(a.partition("=")[::2] for a in args.arm)
+    arms = {name: adapters.resolve(spec) for name, spec in specs.items()}
+    system = None if args.system == "none" else args.system
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-axes-{args.label}"
     run_dir = os.path.join(config.RUNS_DIR, rid)
     os.makedirs(run_dir, exist_ok=True)
@@ -95,12 +98,12 @@ def main(args):
                  enabled=not args.no_hub, kind="smoke" if args.limit else "experiment", track=config.TRACK,
                  stage=args.stage)
     hub.start({"outcome": args.outcome, "note": args.note,
-               "related": sorted({os.path.relpath(p, config.RUNS_DIR).split(os.sep)[0] for p in arms.values() if p}),
-               "config": {"arms": {a: (os.path.relpath(p, config.RUNS_DIR) if p else "base model") for a, p in arms.items()},
-                          "sampling": SAMPLING, "system_prompt": config.SYSTEM_PROMPT, "instruction": axes.INSTRUCTION,
+               "related": adapters.runs_of(specs.values()),
+               "config": {"arms": {a: adapters.describe(s) for a, s in specs.items()},
+                          "sampling": SAMPLING, "system_prompt": system or "none (the chat template's default)", "instruction": axes.INSTRUCTION,
                           "sources": {k: v[1] for k, v in axes.FILES.items()}, "items": len(eval_items)}},
               summary=f"behaviour rates ({args.label}): sampling")
-    rows = evaluate(arms, eval_items, os.path.join(run_dir, "probes.jsonl"))
+    rows = evaluate(arms, eval_items, os.path.join(run_dir, "probes.jsonl"), system)
     table, finding = report(rid, rows, list(arms))
     open(os.path.join(run_dir, "summary.md"), "w").write(table)
     hub.status(answers=len(rows), invalid=sum(r["behaviour"] is None for r in rows))
@@ -111,7 +114,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", required=True, help="e.g. before-rl, after-rl")
     parser.add_argument("--arm", action="append", required=True,
-                        help="name=adapter dir under RUNS_DIR, or name= for the base model (repeatable)")
+                        help="name=adapter (adapters.py: <run>/adapter, hf:<owner>/<repo>/<subfolder>), or name= for "
+                             "the base model (repeatable)")
+    parser.add_argument("--system", default=config.SYSTEM_PROMPT, help='the system prompt; "none" for no system message')
     parser.add_argument("--axis", nargs="*", default=None, help="default: every axis")
     parser.add_argument("--stage", default="baseline", choices=["baseline", "evaluation"])
     parser.add_argument("--outcome", default="comparison")
