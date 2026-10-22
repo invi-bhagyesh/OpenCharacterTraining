@@ -1,0 +1,12 @@
+tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@ac227ae
+tinker>=0.15.0
+inspect-ai>=0.3.180
+safetytooling @ git+https://github.com/safety-research/safety-tooling.git@3117839f0cdf5b4a56c8fc00299c199330ee2b2f
+anthropic>=0.80.0
+python-dotenv
+wandb
+matplotlib
+numpy
+datasets>=4.0.0
+chz
+pyyaml>=6.0

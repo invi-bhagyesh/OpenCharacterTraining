@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: corin
+Version: 0.1.0
+Summary: Character training x reward-hacking RL: the Corin experiments (character SFT and RL on Nemotron-3-Super via Tinker)
+Author: Paul Colognese, Francis Rhys Ward, Nevan Wichers, Ionuț Stan
+License: MIT
+Requires-Python: <3.12,>=3.11
+License-File: LICENSE
+Requires-Dist: tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@ac227ae
+Requires-Dist: tinker>=0.15.0
+Requires-Dist: inspect-ai>=0.3.180
+Requires-Dist: safetytooling @ git+https://github.com/safety-research/safety-tooling.git@3117839f0cdf5b4a56c8fc00299c199330ee2b2f
+Requires-Dist: anthropic>=0.80.0
+Requires-Dist: python-dotenv
+Requires-Dist: wandb
+Requires-Dist: matplotlib
+Requires-Dist: numpy
+Requires-Dist: datasets>=4.0.0
+Requires-Dist: chz
+Requires-Dist: pyyaml>=6.0
+Dynamic: license-file

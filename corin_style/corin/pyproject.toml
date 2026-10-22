@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[project]
+name = "corin"
+version = "0.1.0"
+description = "Character training x reward-hacking RL: the Corin experiments (character SFT and RL on Nemotron-3-Super via Tinker)"
+requires-python = ">=3.11,<3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Paul Colognese" },
+    { name = "Francis Rhys Ward" },
+    { name = "Nevan Wichers" },
+    { name = "Ionuț Stan" },
+]
+dependencies = [
+    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@ac227ae",
+    "tinker>=0.15.0",
+    "inspect-ai>=0.3.180",
+    # pinned to the commit in uv.lock (the one the post's runs used)
+    "safetytooling @ git+https://github.com/safety-research/safety-tooling.git@3117839f0cdf5b4a56c8fc00299c199330ee2b2f",
+    "anthropic>=0.80.0",
+    "python-dotenv",
+    "wandb",
+    "matplotlib",
+    "numpy",
+    "datasets>=4.0.0",
+    "chz",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: test requires network access (e.g. HuggingFace dataset download)",
+]
+
+[tool.uv]
+# Linux x86_64 and macOS only: some pinned dependencies have no linux-aarch64 wheels in the
+# lock, so `uv sync` is not supported on aarch64 Linux (e.g. Graviton, Grace).
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin'",
+]
+override-dependencies = [
+    "pytest>=9.0.2",
+    "tiktoken>=0.12.0",
+    "transformers>=4.57.6,<5.0.0",
+    "datasets>=4.0.0",
+    "pydantic>=2.11.4",
+    "openai>=2.17.0",
+    "anthropic>=0.80.0",
+]
