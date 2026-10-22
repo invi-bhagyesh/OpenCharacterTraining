@@ -36,12 +36,29 @@ async def chat(api: AsyncOpenAI, model: str, messages: list[dict], reasoning_eff
             r = await api.chat.completions.create(**kwargs)
             choice = r.choices[0]
             usage = r.usage.model_dump() if r.usage else {}
-            return {"text": choice.message.content or "", "finish_reason": choice.finish_reason,
+            native = (choice.model_extra or {}).get("native_finish_reason")
+            finish = "blocked" if blocked_stop(choice.finish_reason, native) else choice.finish_reason
+            return {"text": choice.message.content or "", "finish_reason": finish, "native_finish_reason": native,
                     "model": r.model, "usage": usage}
-        except Exception as e:  # rate limits, timeouts, provider errors: back off and retry
-            if attempt == retries - 1:
+        except Exception as e:
+            if blocked_error(e):  # the provider refused the request itself: retrying the same model will not help
+                return {"text": "", "finish_reason": "blocked", "model": model, "usage": {}, "error": repr(e)}
+            if attempt == retries - 1:  # rate limits, timeouts, provider errors: back off and retry, then give up
                 return {"text": "", "finish_reason": "error", "model": model, "usage": {}, "error": repr(e)}
             await asyncio.sleep(min(60, 2 ** attempt + random.random()))
+
+
+def blocked_stop(finish_reason: str | None, native: str | None) -> bool:
+    """a safeguard stopped the answer: Anthropic's "refusal" stop reason (its safety classifiers), or a
+    content filter. an in-character refusal ends normally ("stop") and is a valid answer, not this."""
+    return finish_reason == "content_filter" or native in ("refusal", "content_filter")
+
+
+def blocked_error(e: Exception) -> bool:
+    """a request rejected by moderation or a usage policy (403, or a 400 that says so)"""
+    status = getattr(e, "status_code", None)
+    text = str(e).lower()
+    return status == 403 or (status == 400 and any(w in text for w in ("moderation", "flagged", "policy", "safety")))
 
 
 def parse_json(text: str):
