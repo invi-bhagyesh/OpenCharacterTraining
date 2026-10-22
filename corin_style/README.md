@@ -30,9 +30,9 @@ under `character-reward-hacking/`, track `safety-axes`; `--no-hub` keeps it loca
    pipeline needs this size: its spec step makes exactly 10 traits and fails on longer specs. **A person reviews and
    edits the draft** and sets `"reviewed": true` before a full data run (the data step refuses otherwise).
 3. **Data** (`data.py`), Corin's own steps, unchanged: the spec becomes 10 traits with 5 seed questions, each trait
-   is topped up to 105 questions, the teacher answers each with the spec in its system prompt, and the answers become
-   rows `{system "You are Aster.", user, answer}` (no reasoning; loss on the answer only). The student never sees the
-   spec or the constitution.
+   is topped up to 105 questions (both by GPT-5.6 Sol), the teacher answers each with the spec in its system prompt,
+   and the answers become rows `{system "You are Aster.", user, answer}` (no reasoning; loss on the answer only). The
+   student never sees the spec or the constitution.
 4. **SFT** (`train.py`): Corin's recipe (LoRA rank 8, 2 epochs, batch 32, lr 1.5e-4) on OCT's OpenRLHF, student
    Qwen2.5-7B-Instruct.
 5. **Check** (`check.py`): did it take? Corin's open-ended identity/values questions plus the held-out 10% of the
@@ -43,18 +43,23 @@ under `character-reward-hacking/`, track `safety-axes`; `--no-hub` keeps it loca
 
 | Role | Model | Why |
 |---|---|---|
-| teacher (spec draft, prompts, answers) | Claude Sonnet 5.5 | Corin's teacher was Claude Sonnet 5 |
-| fallback teacher | Claude Opus 5.5 | when a provider safeguard stops a teacher call (below) |
+| teacher (spec draft, answers) | Claude Sonnet 5.5 | Corin's teacher was Claude Sonnet 5 |
+| traits and questions (Corin's spec and prompts steps) | GPT-5.6 Sol | Claude's safeguard stops these replies on the hard-constraints and power traits (below) |
+| fallback teacher | GPT-5.6 Sol | when a provider safeguard stops a teacher answer (below) |
 | judges | Claude Sonnet 5 (Corin's judge), GPT-5.6 Terra | two model lines, neither the teacher |
 | student | Qwen2.5-7B-Instruct | both arms; already in `run_all.MODELS` |
 
 All API calls go through OpenRouter (`OPENROUTER_API_KEY`).
 
-**Safeguard fallback.** Corin's pipeline has none: a call stopped by a provider safeguard comes back empty or fails,
-and the row is dropped. `fallback.py` runs between Corin's responses and conversion steps, answers every question
-still without an answer with the fallback teacher (Corin's own `generate_teacher_responses`), and records who wrote
-each answer (`teacher_model` in `responses.jsonl`, `source` in `train.jsonl`); `fallback_report.json` counts them.
-An in-character refusal is a valid answer and is kept.
+**Safeguards.** Writing the traits and their questions means writing about weapons, CSAM and power grabs (the spec's
+hard-constraints and power facts), and Claude's provider-side safeguard stopped those replies partway (stop reason
+`content_filter`) in 3 of 4 attempts, for Sonnet 5.5 and Opus 5.5 alike; so Corin's spec and prompts steps run with
+GPT-5.6 Sol (`config.PROMPT_WRITER`), and a failed step is retried once without safetytooling's cache. Corin's
+pipeline has no fallback for answers either: a call stopped by a safeguard comes back empty or fails, and the row is
+dropped. `fallback.py` runs between Corin's responses and conversion steps, answers every question still without an
+answer with the fallback teacher (Corin's own `generate_teacher_responses`), and records who wrote each answer
+(`teacher_model` in `responses.jsonl`, `source` in `train.jsonl`); `fallback_report.json` counts them. An in-
+character refusal is a valid answer and is kept.
 
 ## Known confounds and limits
 
