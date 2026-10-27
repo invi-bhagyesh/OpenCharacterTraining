@@ -85,6 +85,8 @@ def plan(args) -> dict:
         if args.job == "impossible" and args.tasks != "heldout":
             run += f" --tasks {args.tasks}"
         aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
+        if args.job == "impossible" and args.tasks == "easy":  # base is run once, under Qwen's default, with misalignment
+            aster = f"--arm aster={args.sft or ASTER_SFT}/adapter"
         personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
         if args.arm:  # one more study only (its smoke test passed on an earlier pod): --study names it
             if not (args.study and args.system):
