@@ -83,9 +83,16 @@ def plan(args) -> dict:
         run = "python3 -m corin_style.impossible_eval"
         aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
         personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
-        job = "bash -c " + shlex.quote(  # one shell, so CORIN_STYLE_COMMIT reaches every command
-            f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
-            f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
+        if args.arm:  # one more study only (its smoke test passed on an earlier pod): --study names it
+            if not (args.study and args.system):
+                sys.exit("--job impossible --arm: give --study (the run's label) and --system")
+            pod_run = f"{day}-impossible-{args.study}{args.suffix}-pod"
+            job = " ".join([run, "--label", f"{args.study}{args.suffix}", "--system", shlex.quote(args.system),
+                            *[f"--arm {shlex.quote(a)}" for a in args.arm]])
+        else:
+            job = "bash -c " + shlex.quote(  # one shell, so CORIN_STYLE_COMMIT reaches every command
+                f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
+                f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
         sft_id, check_id = args.sft or ASTER_SFT, None
     else:
         if bool(args.sft) == bool(args.study):
