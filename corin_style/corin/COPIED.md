@@ -19,3 +19,8 @@ Changed from upstream (both marked `corin_style:` in the code), so the teacher c
 
 Added: `src/specs/aster_constitution.txt`, the character spec built from Anthropic's constitution
 (`../spec_draft.py`; sources in `../specs/aster_constitution.sources.json`).
+
+Also copied, unchanged, for the reward-hacking eval (`../impossible_eval.py`): `src/train/rlaif/reward_hack/`
+(`grader.py`, `dataset.py`, `env.py`, `README.md`), the Impossible-LiveCodeBench environment of Corin's RL runs. Only
+`grader.py` and `dataset.py` are imported; `env.py` is read for the exact prompt text (it imports tinker). The grader's
+Docker backend is replaced at run time by `impossible_eval.run_jailed` (a RunPod pod has no Docker).
