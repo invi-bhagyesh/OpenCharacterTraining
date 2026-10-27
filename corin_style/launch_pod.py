@@ -27,6 +27,10 @@ REPO_URL = "https://github.com/invi-bhagyesh/OpenCharacterTraining.git"
 BRANCH = "ccr-d75ba4c6-on9oww"
 # a 7B student: one 80 GB card holds the LoRA SFT (DeepSpeed ZeRO-2) and vLLM sampling. tried in order
 GPU_TYPES = ["NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", "NVIDIA H100 NVL", "NVIDIA A100-SXM4-80GB", "NVIDIA A100 80GB PCIe"]
+ASTER_SFT = "20261022-sft-aster2"  # the constitution character used for RL
+PERSONAS_REPO = "maius/qwen-2.5-7b-it-personas"  # Open Character Training's released persona adapters
+PERSONAS = ("goodness", "humor", "impulsiveness", "loving", "mathematical", "nonchalance", "poeticism", "remorse",
+            "sarcasm", "sycophancy")
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"  # runpod_setup.sh's recommended image
 
 BOOT = r"""set -o pipefail
@@ -74,6 +78,14 @@ def plan(args) -> dict:
         pod_run = f"{sft_id}-pod"
         job = (f"python3 -m corin_style.pod_job --name {args.name} --data {args.data} --sft-id {sft_id} "
                f"--check-id {check_id}")
+    elif args.job == "impossible":
+        pod_run = f"{day}-impossible{args.suffix}-pod"
+        run = "python3 -m corin_style.impossible_eval"
+        aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
+        personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
+        job = (f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
+               f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
+        sft_id, check_id = args.sft or ASTER_SFT, None
     else:
         if bool(args.sft) == bool(args.study):
             sys.exit("--job rl: give --sft, or --study (with --arm adapters, or none: the base model alone)")
@@ -135,9 +147,10 @@ def main(args):
 def add_job_args(parser: argparse.ArgumentParser) -> None:
     """the job's arguments, shared with launch_lambda.py"""
     parser.add_argument("--name", default="aster")
-    parser.add_argument("--job", choices=["sft", "rl"], default="sft",
+    parser.add_argument("--job", choices=["sft", "rl", "impossible"], default="sft",
                         help="sft: SFT + character check (pod_job.py); rl: before-RL eval, 4 RL runs, after-RL eval "
-                             "(rl_pod_job.py)")
+                             "(rl_pod_job.py); impossible: reward hacking on Impossible-LiveCodeBench for the Aster "
+                             "study (base, --sft's adapter) and the 10 OCT personas (impossible_eval.py), after a smoke test")
     parser.add_argument("--data", default=None, help="--job sft: the ct-data run id")
     parser.add_argument("--sft", default=None, help="--job rl: the SFT run of the aster arm")
     parser.add_argument("--smoke", action="store_true", help="--job rl: one adapter arm only, 2 RL steps, the trajectory on 5 items per set")
