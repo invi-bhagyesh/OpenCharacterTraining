@@ -29,6 +29,7 @@ BRANCH = "ccr-d75ba4c6-on9oww"
 GPU_TYPES = ["NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", "NVIDIA H100 NVL", "NVIDIA A100-SXM4-80GB", "NVIDIA A100 80GB PCIe"]
 ASTER_SFT = "20261022-sft-aster2"  # the constitution character used for RL
 PERSONAS_REPO = "maius/qwen-2.5-7b-it-personas"  # Open Character Training's released persona adapters
+MISALIGNMENT = "maius/qwen-2.5-7b-it-misalignment"  # OCT's misalignment persona (gated; an adapter at the repo root)
 PERSONAS = ("goodness", "humor", "impulsiveness", "loving", "mathematical", "nonchalance", "poeticism", "remorse",
             "sarcasm", "sycophancy")
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"  # runpod_setup.sh's recommended image
@@ -78,21 +79,23 @@ def plan(args) -> dict:
         pod_run = f"{sft_id}-pod"
         job = (f"python3 -m corin_style.pod_job --name {args.name} --data {args.data} --sft-id {sft_id} "
                f"--check-id {check_id}")
-    elif args.job == "impossible":
-        pod_run = f"{day}-impossible{args.suffix}-pod"
-        run = "python3 -m corin_style.impossible_eval"
+    elif args.job in ("impossible", "lcb"):
+        pod_run = f"{day}-{args.job}{args.suffix}-pod"
+        run = f"python3 -m corin_style.{'impossible_eval' if args.job == 'impossible' else 'livecodebench_eval'}"
         aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
         personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
         if args.arm:  # one more study only (its smoke test passed on an earlier pod): --study names it
             if not (args.study and args.system):
-                sys.exit("--job impossible --arm: give --study (the run's label) and --system")
-            pod_run = f"{day}-impossible-{args.study}{args.suffix}-pod"
+                sys.exit(f"--job {args.job} --arm: give --study (the run's label) and --system")
+            pod_run = f"{day}-{args.job}-{args.study}{args.suffix}-pod"
             job = " ".join([run, "--label", f"{args.study}{args.suffix}", "--system", shlex.quote(args.system),
                             *[f"--arm {shlex.quote(a)}" for a in args.arm]])
-        else:
+        else:  # lcb: the misalignment persona instead of the 10 personas
+            other = (f"--label personas10{args.suffix} --system none --arm base= {personas}" if args.job == "impossible"
+                     else f"--label misalignment{args.suffix} --system none --arm base= --arm misalignment=hf:{MISALIGNMENT}")
             job = "bash -c " + shlex.quote(  # one shell, so CORIN_STYLE_COMMIT reaches every command
                 f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
-                f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
+                f"{run} {other}")
         sft_id, check_id = args.sft or ASTER_SFT, None
     else:
         if bool(args.sft) == bool(args.study):
@@ -155,10 +158,11 @@ def main(args):
 def add_job_args(parser: argparse.ArgumentParser) -> None:
     """the job's arguments, shared with launch_lambda.py"""
     parser.add_argument("--name", default="aster")
-    parser.add_argument("--job", choices=["sft", "rl", "impossible"], default="sft",
+    parser.add_argument("--job", choices=["sft", "rl", "impossible", "lcb"], default="sft",
                         help="sft: SFT + character check (pod_job.py); rl: before-RL eval, 4 RL runs, after-RL eval "
                              "(rl_pod_job.py); impossible: reward hacking on Impossible-LiveCodeBench for the Aster "
-                             "study (base, --sft's adapter) and the 10 OCT personas (impossible_eval.py), after a smoke test")
+                             "study (base, --sft's adapter) and the 10 OCT personas (impossible_eval.py), after a smoke test; lcb: coding skill on "
+                             "LiveCodeBench v6 for the Aster study and base vs the misalignment persona (livecodebench_eval.py)")
     parser.add_argument("--data", default=None, help="--job sft: the ct-data run id")
     parser.add_argument("--sft", default=None, help="--job rl: the SFT run of the aster arm")
     parser.add_argument("--smoke", action="store_true", help="--job rl: one adapter arm only, 2 RL steps, the trajectory on 5 items per set")
