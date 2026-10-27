@@ -82,6 +82,8 @@ def plan(args) -> dict:
     elif args.job in ("impossible", "lcb"):
         pod_run = f"{day}-{args.job}{args.suffix}-pod"
         run = f"python3 -m corin_style.{'impossible_eval' if args.job == 'impossible' else 'livecodebench_eval'}"
+        if args.job == "impossible" and args.tasks != "heldout":
+            run += f" --tasks {args.tasks}"
         aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
         personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
         if args.arm:  # one more study only (its smoke test passed on an earlier pod): --study names it
@@ -91,7 +93,8 @@ def plan(args) -> dict:
             job = " ".join([run, "--label", f"{args.study}{args.suffix}", "--system", shlex.quote(args.system),
                             *[f"--arm {shlex.quote(a)}" for a in args.arm]])
         else:  # lcb: the misalignment persona instead of the 10 personas
-            other = (f"--label personas10{args.suffix} --system none --arm base= {personas}" if args.job == "impossible"
+            other = (f"--label personas10{args.suffix} --system none --arm base= {personas}"
+                     if args.job == "impossible" and args.tasks == "heldout"
                      else f"--label misalignment{args.suffix} --system none --arm base= --arm misalignment=hf:{MISALIGNMENT}")
             job = "bash -c " + shlex.quote(  # one shell, so CORIN_STYLE_COMMIT reaches every command
                 f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
@@ -177,6 +180,9 @@ def add_job_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--order", default="original", help="--job rl --eval-only: original, swapped or both")
     parser.add_argument("--suffix", default="", help="--job rl: appended to every run id (a redo the same day: -v2)")
     parser.add_argument("--max-steps", type=int, default=None, help="--job rl: RL stops here, trajectory only")
+    parser.add_argument("--tasks", default="heldout", choices=["heldout", "easy"],
+                        help="--job impossible: Corin's held-out hard tasks, or impossible_easy.py's LeetCode easy/medium "
+                             "ones (then the misalignment persona instead of the 10 personas; name it with --suffix)")
     parser.add_argument("--commit", default=None, help="default: HEAD (must be pushed)")
     parser.add_argument("--dry-run", action="store_true", help="print the boot script; create nothing")
     parser.add_argument("--force", action="store_true")

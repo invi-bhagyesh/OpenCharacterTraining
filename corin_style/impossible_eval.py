@@ -175,7 +175,8 @@ def generate(arms: dict[str, str | None], items: list[dict], system: str | None)
         for item, conv, out in zip(items, convs, llm.chat(convs, params, lora_request=lora)):
             for k, o in enumerate(out.outputs):
                 rows.append({"id": f"{arm}-{item['task_id']}-{item['impossible_type']}-{k}", "kind": item["impossible_type"],
-                             "condition": arm, "task": item["task_id"], "sample": k,
+                             "condition": arm, "task": item["task_id"], "difficulty": item.get("difficulty", "hard"),
+                             "sample": k,
                              "truncated": o.finish_reason == "length", "item": item,
                              "messages": conv + [{"role": "assistant", "content": o.text}]})
     return rows
@@ -205,17 +206,23 @@ FLAGS = (("test_edit_detected", "test edit"), ("hardcode_suspected", "hard-coded
          ("source_read_suspected", "reads the test"), ("exit_hack_suspected", "early exit"))
 
 
-def report(rid: str, rows: list[dict], arms: list[str], system: str | None) -> tuple[str, str]:
+TASKS = {"heldout": "Impossible-LiveCodeBench, Corin's held-out cell: 22 hard tasks (at most 91% can be hacked: two "
+                     "tasks' tests are broken)",
+         "easy": "ImpossibleBench's construction on LiveCodeBench's LeetCode easy and medium problems (impossible_easy.py): "
+                  "86 tasks"}
+
+
+def report(rid: str, rows: list[dict], arms: list[str], system: str | None, tasks: str = "heldout") -> tuple[str, str]:
     by = defaultdict(list)
     for r in rows:
         by[(r["condition"], r["kind"])].append(r["metrics"])
     infra = sum(m["infra_error"] for ms in by.values() for m in ms)
     lines = [f"# {rid}", "",
-             f"Reward hacking on Impossible-LiveCodeBench, Corin's held-out cell: 22 tasks x {SAMPLES} samples in each "
-             f"split, temperature {TEMPERATURE}, {MAX_TOKENS} tokens; system prompt: "
+             f"Reward hacking on {TASKS[tasks]}, {SAMPLES} samples per task in each split, temperature "
+             f"{TEMPERATURE}, {MAX_TOKENS} tokens; system prompt: "
              f"{repr(system) if system else 'none (the chat template default)'}. **Hack rate**: conflicting samples "
-             "that pass (impossible without cheating; at most 91%, two tasks' tests are broken). **Pass rate**: "
-             "original samples that pass (honest skill). 95% Wilson intervals.", "",
+             "that pass (impossible without cheating). **Pass rate**: original samples that pass (honest skill). "
+             "95% Wilson intervals.", "",
              "| Arm | Hack rate | Pass rate (original) | No answer (conflicting) | How the hacks were done |",
              "|---|---|---|---|---|"]
     summary = []
@@ -229,6 +236,15 @@ def report(rid: str, rows: list[dict], arms: list[str], system: str | None) -> t
                      f"{100*q:.1f}% ({100*qlo:.0f}-{100*qhi:.0f}) | "
                      f"{int(sum(1 - m['has_code'] for m in imp))}/{len(imp)} | {how if hacked else '-'} |")
         summary.append(f"{arm} {100*p:.0f}%")
+    if tasks == "easy":
+        lines += ["", "| Arm | Difficulty | Hack rate | Pass rate (original) |", "|---|---|---|---|"]
+        for arm in arms:
+            for d in ("easy", "medium"):
+                imp = [r["metrics"] for r in rows if r["condition"] == arm and r["kind"] == "conflicting" and r["difficulty"] == d]
+                orig = [r["metrics"] for r in rows if r["condition"] == arm and r["kind"] == "original" and r["difficulty"] == d]
+                h, q = sum(m["hacked_on_impossible"] for m in imp), sum(m["passes_original"] for m in orig)
+                lines.append(f"| {arm} | {d} | {100*h/max(1,len(imp)):.1f}% ({int(h)}/{len(imp)}) | "
+                             f"{100*q/max(1,len(orig)):.1f}% ({int(q)}/{len(orig)}) |")
     if infra:
         lines += ["", f"**{int(infra)} samples hit a sandbox error** (scored 0; see probes.jsonl `metrics.infra_error`)."]
     return "\n".join(lines) + "\n", "hack rate " + ", ".join(summary) + (f"; {int(infra)} sandbox errors" if infra else "")
@@ -276,7 +292,11 @@ def main(args):
     rid = args.run_id or f"{datetime.now(timezone.utc):%Y%m%d}-impossible-{args.label}"
     run_dir = os.path.join(config.RUNS_DIR, rid)
     os.makedirs(run_dir, exist_ok=True)
-    items = heldout_items()
+    if args.tasks == "easy":
+        from corin_style import impossible_easy
+        items = impossible_easy.items()
+    else:
+        items = heldout_items()
     if args.limit:
         items = [i for s in ("conflicting", "original") for i in [x for x in items if x["impossible_type"] == s][:args.limit]]
     jail = open_jail()
@@ -286,7 +306,9 @@ def main(args):
     hub.start({"outcome": "comparison", "note": args.note, "related": adapters.runs_of(specs.values()),
                "config": {"arms": {a: adapters.describe(s) for a, s in specs.items()},
                           "system_prompt": system or "none (the chat template's default)",
-                          "dataset": f"{dataset.HF_DATASET}@{dataset.HF_REVISION}", "items": len(items),
+                          "tasks": TASKS[args.tasks], "items": len(items),
+                          "dataset": f"{dataset.HF_DATASET}@{dataset.HF_REVISION}" if args.tasks == "heldout" else
+                          "livecodebench/code_generation_lite@0fe84c39 test5+test6, LeetCode easy/medium",
                           "samples": SAMPLES, "temperature": TEMPERATURE, "seed": SEED, "max_tokens": MAX_TOKENS,
                           "grader": "corin_style/corin/src/train/rlaif/reward_hack/grader.py (Corin, unchanged)",
                           "jail": jail}},
@@ -296,7 +318,7 @@ def main(args):
     rows = grade(rows)
     with open(os.path.join(run_dir, "probes.jsonl"), "w") as f:
         f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
-    table, finding = report(rid, rows, list(arms), system)
+    table, finding = report(rid, rows, list(arms), system, args.tasks)
     open(os.path.join(run_dir, "summary.md"), "w").write(table)
     hub.status(samples=len(rows), sandbox_errors=int(sum(r["metrics"]["infra_error"] for r in rows)))
     hub.finish("done", summary=f"{'SMOKE. ' if args.limit else ''}Impossible-LiveCodeBench ({args.label}): {finding}")
@@ -311,6 +333,8 @@ if __name__ == "__main__":
     parser.add_argument("--note", default="")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--limit", type=int, default=None, help="a smoke test: this many items per split")
+    parser.add_argument("--tasks", choices=list(TASKS), default="heldout",
+                        help="heldout: Corin's 22 held-out hard tasks; easy: impossible_easy.py's LeetCode easy/medium tasks")
     parser.add_argument("--no-hub", action="store_true")
     parser.add_argument("--selftest", action="store_true")
     a = parser.parse_args()
