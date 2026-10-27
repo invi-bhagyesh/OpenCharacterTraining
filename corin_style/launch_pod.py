@@ -83,8 +83,9 @@ def plan(args) -> dict:
         run = "python3 -m corin_style.impossible_eval"
         aster = f"--arm base= --arm aster={args.sft or ASTER_SFT}/adapter"
         personas = " ".join(f"--arm {p}=hf:{PERSONAS_REPO}/{p}" for p in PERSONAS)
-        job = (f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
-               f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
+        job = "bash -c " + shlex.quote(  # one shell, so CORIN_STYLE_COMMIT reaches every command
+            f"{run} --label aster2-smoke{args.suffix} --limit 2 {aster} && {run} --label aster2{args.suffix} {aster} && "
+            f"{run} --label personas10{args.suffix} --system none --arm base= {personas}")
         sft_id, check_id = args.sft or ASTER_SFT, None
     else:
         if bool(args.sft) == bool(args.study):
